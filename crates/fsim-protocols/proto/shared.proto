@@ -1,0 +1,40 @@
+syntax = "proto3";
+package fsim.protocols.v1;
+
+import "envelope.proto";
+
+enum InternalOrderStatus {
+  INTERNAL_ORDER_STATUS_UNSPECIFIED = 0;
+  INTERNAL_ORDER_STATUS_BLOCKED_UPSTREAM = 1;
+  INTERNAL_ORDER_STATUS_READY_FOR_LOGISTICS = 2;
+  INTERNAL_ORDER_STATUS_INPUTS_STAGED = 3;
+  INTERNAL_ORDER_STATUS_IN_PROCESS = 4;
+  INTERNAL_ORDER_STATUS_COMPLETED = 5;
+  INTERNAL_ORDER_STATUS_ABORTED = 6;
+}
+
+message HandlingUnitSpec {
+  string container_type = 1;
+  string item_sku = 2;
+  uint32 quantity = 3;
+  string lot_id = 4;
+}
+
+message RequiredInputEntry {
+  string square_name = 1;
+  HandlingUnitSpec spec = 2;
+}
+
+message InternalOrder {
+  string order_id = 1;
+  string parent_order_id = 2;
+  string customer_order_id = 3;
+  TeamTag target_team = 4;
+  string target_cell_id = 5;
+  HandlingUnitSpec output_spec = 6;
+  InternalOrderStatus status = 7;
+  repeated string upstream_order_ids = 8;
+  repeated RequiredInputEntry required_inputs = 9;
+  int64 created_at_ms = 10;
+  int64 due_at_ms = 11;
+}

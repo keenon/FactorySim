@@ -1,0 +1,17 @@
+[package]
+name = "fsim-layout-graph"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+fuzz-tests = []
+
+[dependencies]
+fsim-geom.workspace = true
+fsim-motion.workspace = true
+fsim-navgrid.workspace = true
+fsim-path-vehicle.workspace = true
+fsim-path-walk.workspace = true
+serde.workspace = true

@@ -1,0 +1,32 @@
+[package]
+name = "fsim-plant-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+fuzz-tests = []
+
+[dependencies]
+fsim-core.workspace = true
+fsim-facilities-ehs.workspace = true
+fsim-finance.workspace = true
+fsim-finishing-packing.workspace = true
+fsim-gateway.workspace = true
+fsim-geom.workspace = true
+fsim-heat-treat.workspace = true
+fsim-layout-graph.workspace = true
+fsim-machining.workspace = true
+fsim-materials-logistics.workspace = true
+fsim-molding.workspace = true
+fsim-motion.workspace = true
+fsim-net.workspace = true
+fsim-people.workspace = true
+fsim-planning-flow.workspace = true
+fsim-protocols.workspace = true
+fsim-quality.workspace = true
+fsim-sales.workspace = true
+fsim-toolroom.workspace = true
+serde.workspace = true
+serde_json.workspace = true

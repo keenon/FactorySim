@@ -1,0 +1,20 @@
+[package]
+name = "fsim-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+fuzz-tests = []
+
+[dependencies]
+fsim-geom.workspace = true
+fsim-layout-graph.workspace = true
+fsim-motion.workspace = true
+fsim-protocols.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+serde.workspace = true
+sha2.workspace = true
+thiserror.workspace = true

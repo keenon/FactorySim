@@ -1,0 +1,43 @@
+[package]
+name = "fsim-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+base64.workspace = true
+fsim-core.workspace = true
+fsim-facilities-ehs.workspace = true
+fsim-finance.workspace = true
+fsim-finishing-packing.workspace = true
+fsim-gateway.workspace = true
+fsim-geom.workspace = true
+fsim-heat-treat.workspace = true
+fsim-layout-graph.workspace = true
+fsim-machining.workspace = true
+fsim-materials-logistics.workspace = true
+fsim-molding.workspace = true
+fsim-motion.workspace = true
+fsim-net.workspace = true
+fsim-people.workspace = true
+fsim-planning-flow.workspace = true
+fsim-plant-host.workspace = true
+fsim-protocols.workspace = true
+fsim-quality.workspace = true
+fsim-sales.workspace = true
+fsim-toolroom.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+ring.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+uuid.workspace = true
+zstd.workspace = true

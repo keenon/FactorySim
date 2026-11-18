@@ -1,0 +1,32 @@
+syntax = "proto3";
+package fsim.protocols.v1;
+
+enum TeamTag {
+  TEAM_TAG_UNSPECIFIED = 0;
+  TEAM_TAG_PLATFORM = 1;
+  TEAM_TAG_MACHINING = 2;
+  TEAM_TAG_TOOLROOM = 3;
+  TEAM_TAG_MOLDING = 4;
+  TEAM_TAG_HEAT_TREAT = 5;
+  TEAM_TAG_FINISHING_PACKING = 6;
+  TEAM_TAG_QUALITY = 7;
+  TEAM_TAG_MATERIALS_LOGISTICS = 8;
+  TEAM_TAG_FACILITIES_EHS = 9;
+  TEAM_TAG_PLANNING_FLOW = 10;
+  TEAM_TAG_PEOPLE_OPS = 11;
+  TEAM_TAG_SALES = 12;
+  TEAM_TAG_FINANCE = 13;
+}
+
+message Envelope {
+  TeamTag team_tag = 1;
+  string schema_id = 2;
+  uint32 schema_version = 3;
+  string source_device = 4;
+  string entity_id = 5;
+  int64 plant_timestamp_ms = 6;
+  int64 receive_timestamp_ms = 7;
+  uint64 sequence_number = 8;
+  string correlation_id = 9;
+  bytes payload = 10;
+}

@@ -1,0 +1,79 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/fsim-protocols",
+    "crates/fsim-geom",
+    "crates/fsim-navgrid",
+    "crates/fsim-motion",
+    "crates/fsim-path-walk",
+    "crates/fsim-path-vehicle",
+    "crates/fsim-layout-graph",
+    "crates/fsim-core",
+    "crates/fsim-net",
+    "crates/fsim-plant-host",
+    "crates/fsim-gateway",
+    "crates/fsim-machining",
+    "crates/fsim-toolroom",
+    "crates/fsim-molding",
+    "crates/fsim-heat-treat",
+    "crates/fsim-finishing-packing",
+    "crates/fsim-quality",
+    "crates/fsim-materials-logistics",
+    "crates/fsim-facilities-ehs",
+    "crates/fsim-planning-flow",
+    "crates/fsim-people",
+    "crates/fsim-sales",
+    "crates/fsim-finance",
+    "crates/fsim-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Proprietary"
+
+[workspace.dependencies]
+anyhow = "1.0"
+axum = { version = "0.7", features = ["ws"] }
+base64 = "0.22"
+bytes = "1.11"
+rand = "0.8"
+rand_chacha = "0.3"
+rand_distr = "0.4"
+ring = "0.17"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+thiserror = "2.0"
+tokio = { version = "1.52", features = ["full"] }
+tokio-tungstenite = "0.24"
+toml = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+uuid = { version = "1.29", features = ["v4", "serde"] }
+zstd = "0.13"
+
+fsim-protocols = { path = "crates/fsim-protocols" }
+fsim-geom = { path = "crates/fsim-geom" }
+fsim-navgrid = { path = "crates/fsim-navgrid" }
+fsim-motion = { path = "crates/fsim-motion" }
+fsim-path-walk = { path = "crates/fsim-path-walk" }
+fsim-path-vehicle = { path = "crates/fsim-path-vehicle" }
+fsim-layout-graph = { path = "crates/fsim-layout-graph" }
+fsim-core = { path = "crates/fsim-core" }
+fsim-net = { path = "crates/fsim-net" }
+fsim-plant-host = { path = "crates/fsim-plant-host" }
+fsim-gateway = { path = "crates/fsim-gateway" }
+fsim-machining = { path = "crates/fsim-machining" }
+fsim-toolroom = { path = "crates/fsim-toolroom" }
+fsim-molding = { path = "crates/fsim-molding" }
+fsim-heat-treat = { path = "crates/fsim-heat-treat" }
+fsim-finishing-packing = { path = "crates/fsim-finishing-packing" }
+fsim-quality = { path = "crates/fsim-quality" }
+fsim-materials-logistics = { path = "crates/fsim-materials-logistics" }
+fsim-facilities-ehs = { path = "crates/fsim-facilities-ehs" }
+fsim-planning-flow = { path = "crates/fsim-planning-flow" }
+fsim-people = { path = "crates/fsim-people" }
+fsim-sales = { path = "crates/fsim-sales" }
+fsim-finance = { path = "crates/fsim-finance" }
+fsim-server = { path = "crates/fsim-server" }

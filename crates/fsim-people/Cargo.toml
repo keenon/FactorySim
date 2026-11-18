@@ -1,0 +1,17 @@
+[package]
+name = "fsim-people"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+fuzz-tests = []
+
+[dependencies]
+fsim-core.workspace = true
+fsim-geom.workspace = true
+fsim-layout-graph.workspace = true
+fsim-motion.workspace = true
+fsim-protocols.workspace = true
+serde.workspace = true

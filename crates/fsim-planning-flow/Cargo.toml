@@ -1,0 +1,15 @@
+[package]
+name = "fsim-planning-flow"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+fuzz-tests = []
+
+[dependencies]
+fsim-core.workspace = true
+fsim-protocols.workspace = true
+fsim-sales.workspace = true
+serde.workspace = true
