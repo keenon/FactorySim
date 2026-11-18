@@ -18,5 +18,5 @@ Runs the deterministic factory simulation plant (`SimWorld`), manages virtual de
 - **"Why Isn't This Running?" Status Generator** (`SimWorld::cell_status_reports`): Produces plain-language status and clickable blocker links from estimated state for every cell.
 
 ## Public API & Reference Oracle
-- **[`src/lib.rs`](src/lib.rs)**: `InstalledCell`, `PipelineItem`, `AlertItem`, `SkipSummaryCard`, `SimWorld`, `full_starter_catalog()`.
+- **[`src/lib.rs`](src/lib.rs)**: `InstalledCell`, `PipelineItem`, `AlertItem`, `SkipSummaryCard`, `SimWorld`, `full_starter_catalog()`, `status_color_hex(CellRunState)`, `catalog_preview_model(&CellCatalogEntry) -> Option<CellModel>` (default-config `Planned` model for planning ghosts). `SimWorld::visualize_plant` attaches team `CellModel`s (machining today) to cell `SceneNode`s using each cell's add-ons and current run state.
 - **[`src/reference.rs`](src/reference.rs)**: Skip-ahead vs. fine-stepping equivalence oracle (`reference_verify_skip_equivalence`).

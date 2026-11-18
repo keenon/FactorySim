@@ -21,12 +21,12 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use fsim_core::{CellCatalogEntry, CellStatusReport, SceneNode, SimTime};
+use fsim_core::{CellCatalogEntry, CellModel, CellStatusReport, SceneNode, SimTime};
 use fsim_facilities_ehs::{starter_building_listings, BuildingListing};
 use fsim_finance::RunwayProjection;
 use fsim_gateway::GatewayState;
 use fsim_planning_flow::BottleneckReport;
-use fsim_plant_host::{full_starter_catalog, SimWorld, SkipSummaryCard};
+use fsim_plant_host::{catalog_preview_model, full_starter_catalog, SimWorld, SkipSummaryCard};
 use fsim_protocols::PlantCommand;
 use fsim_sales::{
     starter_certifications, starter_markets, CertificationSpec, MarketDefinition,
@@ -94,6 +94,8 @@ pub struct StaticCatalogBundle {
     pub cells: Vec<CellCatalogEntry>,
     pub markets: Vec<MarketDefinition>,
     pub certifications: Vec<CertificationSpec>,
+    /// Team-generated 3D preview models keyed by `catalog_id`, for planning-mode ghosts.
+    pub preview_models: BTreeMap<String, CellModel>,
 }
 
 /// Active game actor held in server memory and persisted to `data/games/<game-id>/`.
@@ -682,11 +684,17 @@ async fn api_catalogs(State(state): State<AppState>, headers: HeaderMap) -> Resp
     let Some(_) = state.authenticate_headers(&headers) else {
         return unauthorized("Sign-in required");
     };
+    let cells = full_starter_catalog();
+    let preview_models = cells
+        .iter()
+        .filter_map(|c| catalog_preview_model(c).map(|m| (c.catalog_id.clone(), m)))
+        .collect();
     Json(StaticCatalogBundle {
         buildings: starter_building_listings(),
-        cells: full_starter_catalog(),
+        cells,
         markets: starter_markets(),
         certifications: starter_certifications(),
+        preview_models,
     })
     .into_response()
 }

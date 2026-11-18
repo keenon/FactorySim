@@ -295,6 +295,29 @@ async fn test_headless_bot_auth_lifecycle_and_playable_loop() {
     assert_eq!(snap_after.world.tutorial_step, 0);
     assert!(!snap_after.cell_statuses.is_empty());
 
+    // The CNC cell is rendered from the machining team's procedural 3D model, fitting its spec envelope.
+    let cnc_node = snap_after.scene_nodes_by_plant["plant-1"]
+        .iter()
+        .find(|n| n.node_id == "cell-cnc-1")
+        .expect("cnc-1 scene node");
+    let model = cnc_node.model.as_ref().expect("machining cells carry a CellModel");
+    assert!(model.fits_envelope());
+    assert_eq!((model.width_mm, model.depth_mm), (cnc_node.width_mm, cnc_node.depth_mm));
+    assert!(model.part("spindle").is_some() && model.part("probe").is_some());
+
+    // The catalog bundle ships preview models for planning ghosts.
+    let req_cat = axum::http::Request::builder()
+        .uri("/api/catalogs")
+        .header("authorization", format!("Bearer {}", player_auth.session_token))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let resp_cat = app.clone().oneshot(req_cat).await.unwrap();
+    let cats: fsim_server::StaticCatalogBundle =
+        serde_json::from_slice(&axum::body::to_bytes(resp_cat.into_body(), 8 * 1024 * 1024).await.unwrap()).unwrap();
+    for id in ["cnc-3axis-vmc", "cnc-5axis-trunnion", "cnc-turning-lathe", "cnc-compact-mill"] {
+        assert!(cats.preview_models.contains_key(id), "missing preview model for {id}");
+    }
+
     // File a "Report a problem" bundle and verify seed, checkpoint, and log position are recorded
     let req_rep = axum::http::Request::builder()
         .method("POST")

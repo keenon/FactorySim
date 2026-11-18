@@ -2,5 +2,8 @@
 /data
 /node_modules
 /web/node_modules
+/web/.test-build
+/web/dist/app.js
+/web/dist/app.js.map
 .DS_Store
 *.swp

@@ -22,6 +22,7 @@ use fsim_geom::PointMm;
 use fsim_heat_treat::starter_heat_treat_catalog;
 use fsim_layout_graph::{SquareEndpoint, TransportGraph};
 use fsim_machining::{
+    machining_cell_model,
     reference::{reference_cycle_time_ms, reference_scrap_permille},
     starter_machining_catalog, MachiningCellConfig,
 };
@@ -81,6 +82,30 @@ pub mod tuple_map_serde {
         Ok(vec.into_iter().collect())
     }
 }
+/// Muted light-theme status palette used for fallback cell boxes.
+pub fn status_color_hex(state: CellRunState) -> &'static str {
+    match state {
+        CellRunState::Running => "#7cbf8a",
+        CellRunState::Installing | CellRunState::Planned => "#8fb3d9",
+        CellRunState::Blocked | CellRunState::Setup => "#e3b867",
+        CellRunState::Down => "#de8a7e",
+        CellRunState::Idle => "#b8c1c8",
+    }
+}
+
+/// Preview 3D model for a catalog entry (default configuration, `Planned` state), used by the
+/// viewer to draw planning-mode ghosts. `None` for teams that have not shipped a model yet.
+pub fn catalog_preview_model(catalog: &CellCatalogEntry) -> Option<fsim_core::CellModel> {
+    match catalog.team {
+        TeamTag::Machining => Some(machining_cell_model(
+            catalog,
+            &MachiningCellConfig::default(),
+            CellRunState::Planned,
+        )),
+        _ => None,
+    }
+}
+
 /// Returns the combined starter catalog across all teams.
 pub fn full_starter_catalog() -> Vec<CellCatalogEntry> {
     let mut all = Vec::new();
@@ -2116,12 +2141,16 @@ impl SimWorld {
                 continue;
             };
             let st = statuses.get(&cell.cell_id);
-            let color = match st.map(|s| s.state) {
-                Some(CellRunState::Running) => "#22c55e",
-                Some(CellRunState::Installing) => "#38bdf8",
-                Some(CellRunState::Blocked) => "#f59e0b",
-                Some(CellRunState::Down) => "#ef4444",
-                _ => "#64748b",
+            let run_state = st.map(|s| s.state).unwrap_or(CellRunState::Idle);
+            let color = status_color_hex(run_state);
+            let model = if cell.team == TeamTag::Machining {
+                Some(machining_cell_model(
+                    &cat,
+                    &MachiningCellConfig::from_addons(&cell.addons),
+                    run_state,
+                ))
+            } else {
+                None
             };
             nodes.push(SceneNode {
                 node_id: format!("cell-{}", cell.cell_id),
@@ -2137,6 +2166,7 @@ impl SimWorld {
                 color_hex: color.to_string(),
                 label: format!("{} ({})", cell.display_name, cell.cell_id),
                 ghost: self.now < cell.commissioned_at,
+                model,
             });
         }
 
@@ -2160,14 +2190,15 @@ impl SimWorld {
                     height_mm: if has_item { 350 } else { 40 },
                     rotation_deg: 0,
                     color_hex: if has_item {
-                        "#eab308".to_string()
+                        "#e8b04b".to_string()
                     } else if sq.is_input {
-                        "#3b82f6".to_string()
+                        "#8fb3d9".to_string()
                     } else {
-                        "#a855f7".to_string()
+                        "#b9a3d6".to_string()
                     },
                     label: format!("{}:{}", sq.cell_id, sq.square_name),
                     ghost: false,
+                    model: None,
                 });
             }
         }

@@ -1,7 +1,10 @@
 //! `fsim-machining`: CNC mills, lathes, and finishing mills; conditional models for cycle time,
 //! per-tool wear, in-process probing, chip hopper accumulation, status reporting, and 3D scene nodes.
 
+pub mod model;
 pub mod reference;
+
+pub use model::{machining_cell_model, MachineKind};
 
 use fsim_core::{CellAddonSpec, CellCatalogEntry, Money};
 use fsim_protocols::TeamTag;

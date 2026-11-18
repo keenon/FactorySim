@@ -17,7 +17,7 @@ Game and MCTS server hosting user authentication (`data/users.sqlite`), game act
 - **PBKDF2-HMAC-SHA256 Password Hashing & Atomic File Persistence** (`reference::reference_hash_password`, `reference::atomic_write_file`): Hashes credentials with 100,000 iterations of `ring::pbkdf2` and performs crash-safe atomic file renames.
 
 ## Public API & Reference Oracle
-- **[`src/lib.rs`](src/lib.rs)**: `AppState`, `GameInstance`, `ClientGameSnapshot`, `StaticCatalogBundle`, `build_router()`.
+- **[`src/lib.rs`](src/lib.rs)**: `AppState`, `GameInstance`, `ClientGameSnapshot`, `StaticCatalogBundle` (includes `preview_models: catalog_id -> CellModel` for planning ghosts), `build_router()`. Serves the built web bundle from `web/dist` (`FSIM_WEB_DIST`).
 - **[`src/sqlite.rs`](src/sqlite.rs)**: `SqliteConn` FFI wrapper for `libsqlite3`.
 - **[`src/reference.rs`](src/reference.rs)**: Password hashing and atomic write oracle (`reference_hash_password`, `reference_verify_password`, `atomic_write_file`).
 - **[`tests/headless_bot.rs`](tests/headless_bot.rs)**: Headless CI bot exercising invite-link registration, password reset, tutorial play, backward-chaining orders, checkpoint rewind, and problem reporting.

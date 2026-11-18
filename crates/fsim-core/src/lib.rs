@@ -481,6 +481,8 @@ pub struct CellAddonSpec {
 }
 
 /// Generic 3D scene node emitted by a team's pure `visualize()` function.
+/// `x_mm`, `y_mm` is the footprint origin (min corner before rotation); `width_mm`/`depth_mm`
+/// are the unrotated catalog dimensions. When `model` is `None`, the viewer draws a fallback box.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SceneNode {
     pub node_id: String,
@@ -496,6 +498,111 @@ pub struct SceneNode {
     pub color_hex: String,
     pub label: String,
     pub ghost: bool,
+    pub model: Option<CellModel>,
+}
+
+/// Axis of a cylinder primitive in a cell's local frame (x = width, y = depth, z = up).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ModelAxis {
+    X,
+    Y,
+    Z,
+}
+
+/// Surface material hint for the viewer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ModelMaterial {
+    Paint,
+    Metal,
+    Glass,
+    Rubber,
+    Emissive,
+    Screen,
+}
+
+/// Primitive shape of one model part.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum ModelShape {
+    Box { size_mm: [i32; 3] },
+    Cylinder { radius_mm: i32, length_mm: i32, axis: ModelAxis },
+}
+
+/// One named, colored primitive of a procedural cell model.
+/// `node` names are the state-binding contract with the viewer (e.g. `door`, `spindle`, `status_light`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelPart {
+    pub node: String,
+    pub shape: ModelShape,
+    pub center_mm: [i32; 3],
+    pub material: ModelMaterial,
+    pub color_hex: String,
+}
+
+impl ModelPart {
+    /// Axis-aligned bounds `(min, max)` of this part in the cell's local frame.
+    pub fn bounds_mm(&self) -> ([i32; 3], [i32; 3]) {
+        let half = match self.shape {
+            ModelShape::Box { size_mm } => [size_mm[0] / 2, size_mm[1] / 2, size_mm[2] / 2],
+            ModelShape::Cylinder {
+                radius_mm,
+                length_mm,
+                axis,
+            } => match axis {
+                ModelAxis::X => [length_mm / 2, radius_mm, radius_mm],
+                ModelAxis::Y => [radius_mm, length_mm / 2, radius_mm],
+                ModelAxis::Z => [radius_mm, radius_mm, length_mm / 2],
+            },
+        };
+        let c = self.center_mm;
+        (
+            [c[0] - half[0], c[1] - half[1], c[2] - half[2]],
+            [c[0] + half[0], c[1] + half[1], c[2] + half[2]],
+        )
+    }
+}
+
+/// Procedural 3D model of a cell in its local frame: origin at the footprint's min corner,
+/// x along `width_mm`, y along `depth_mm` (front face at y = 0), z up from the floor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CellModel {
+    pub width_mm: i32,
+    pub depth_mm: i32,
+    pub height_mm: i32,
+    pub parts: Vec<ModelPart>,
+}
+
+impl CellModel {
+    /// Union of all part bounds `(min, max)`; `None` if the model has no parts.
+    pub fn bounds_mm(&self) -> Option<([i32; 3], [i32; 3])> {
+        let mut it = self.parts.iter().map(|p| p.bounds_mm());
+        let first = it.next()?;
+        Some(it.fold(first, |(lo, hi), (a, b)| {
+            (
+                [lo[0].min(a[0]), lo[1].min(a[1]), lo[2].min(a[2])],
+                [hi[0].max(b[0]), hi[1].max(b[1]), hi[2].max(b[2])],
+            )
+        }))
+    }
+
+    /// True if every part lies inside the declared `width x depth x height` envelope.
+    pub fn fits_envelope(&self) -> bool {
+        match self.bounds_mm() {
+            None => true,
+            Some((lo, hi)) => {
+                lo[0] >= 0
+                    && lo[1] >= 0
+                    && lo[2] >= 0
+                    && hi[0] <= self.width_mm
+                    && hi[1] <= self.depth_mm
+                    && hi[2] <= self.height_mm
+            }
+        }
+    }
+
+    pub fn part(&self, node: &str) -> Option<&ModelPart> {
+        self.parts.iter().find(|p| p.node == node)
+    }
 }
 
 /// Status report returned by a team's `status(cell, estimated_state)` function ("Why isn't this running?").

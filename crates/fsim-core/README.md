@@ -20,4 +20,5 @@ Deterministic simulation clock (`SimTime`), tenth-cent integer currency (`Money`
 
 ## Public API & Reference Oracle
 - **[`src/lib.rs`](src/lib.rs)**: `SimTime`, `Money`, `StreamRng`, `HandlingUnit`, `HandoffSquare`, `BufferView`, `BufferOp`, `LedgerRecord`, `DoubleEntryLedger`, `OrderPolicy`, `StepOut`, `StepModule`, `CellCatalogEntry`, `CellAddonSpec`, `SceneNode`, `CellStatusReport`, `check_early_call_invariant()`.
+  - **3D model contract**: `CellModel { width_mm, depth_mm, height_mm, parts }`, `ModelPart { node, shape, center_mm, material, color_hex }`, `ModelShape::{Box, Cylinder}` (serde-tagged by `kind`), `ModelAxis`, `ModelMaterial`. Team crates generate `CellModel`s in a footprint-local integer-mm frame (origin at min corner, z up); `CellModel::fits_envelope()` checks every part lies within the declared dimensions. `SceneNode.model` carries it to the viewer (`None` = core fallback box).
 - **[`src/reference.rs`](src/reference.rs)**: Ledger balance oracle (`reference_ledger_is_balanced`), buffer conservation counter (`reference_total_units_in_buffers`), and pass-order oracle (`reference_module_order`).
