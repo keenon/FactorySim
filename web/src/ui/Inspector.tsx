@@ -1,5 +1,7 @@
 import { useState } from 'react';
+import { cellFlows, plantRoutes } from '../logic/flows';
 import { formatDimension, formatMoney, formatSimDate } from '../logic/format';
+import type { LayoutRoute } from '../types';
 import { useGameClient } from '../state/useGameClient';
 import { StatusChip } from './Chips';
 
@@ -87,6 +89,7 @@ export function Inspector() {
               <Meter pct={cell.chip_hopper_pct} />
             </dd>
           </dl>
+          <FlowList routes={plantRoutes(snap.world, cell.plant_id)} cellId={cell.cell_id} />
           <p className="muted small">Drag the machine on the floor to relocate it ($1,500 rigging).</p>
         </section>
       ) : (
@@ -108,6 +111,42 @@ export function Inspector() {
       </div>
 
       <Checkpoints />
+    </div>
+  );
+}
+
+function FlowList({ routes, cellId }: { routes: LayoutRoute[]; cellId: string }) {
+  const client = useGameClient();
+  const { upstream, downstream } = cellFlows(routes, cellId);
+  const row = (r: LayoutRoute, other: string, dir: 'in' | 'out') => (
+    <button key={`${r.from_cell}:${r.from_square}->${r.to_cell}:${r.to_square}`} className={`flow-row flow-${dir}`} onClick={() => client.select(other)}>
+      <span className="flow-dot" />
+      <span>
+        {dir === 'in' ? (
+          <>
+            <code>{r.from_cell}</code> → {r.to_square}
+          </>
+        ) : (
+          <>
+            {r.from_square} → <code>{r.to_cell}</code>
+          </>
+        )}
+      </span>
+      <span className="muted small">{formatDimension(r.distance_mm, client.units)}</span>
+    </button>
+  );
+  return (
+    <div className="flows">
+      <div className="flows-title">
+        <span className="flow-key flow-in" /> Upstream ({upstream.length})
+      </div>
+      {upstream.length === 0 && <div className="muted small">Nothing feeds this cell.</div>}
+      {upstream.map((r) => row(r, r.from_cell, 'in'))}
+      <div className="flows-title">
+        <span className="flow-key flow-out" /> Downstream ({downstream.length})
+      </div>
+      {downstream.length === 0 && <div className="muted small">Nothing downstream.</div>}
+      {downstream.map((r) => row(r, r.to_cell, 'out'))}
     </div>
   );
 }

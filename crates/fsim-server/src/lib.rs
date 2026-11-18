@@ -85,6 +85,8 @@ pub struct ClientGameSnapshot {
     pub bottleneck: BottleneckReport,
     pub checkpoints: Vec<CheckpointMeta>,
     pub last_skip_summary: Option<SkipSummaryCard>,
+    /// Length of the hash-chained gateway log; the entries themselves stay server-side.
+    pub gateway_log_len: usize,
 }
 
 /// Static catalog bundle sent once and cached by the browser.
@@ -114,8 +116,12 @@ impl GameInstance {
         for pid in self.world.plants.keys() {
             scenes.insert(pid.clone(), self.world.visualize_plant(pid));
         }
+        let mut world = self.world.clone();
+        let gateway_log_len = world.gateway.log_entries.len();
+        world.gateway.log_entries.clear();
         ClientGameSnapshot {
-            world: self.world.clone(),
+            world,
+            gateway_log_len,
             cell_statuses: self.world.cell_status_reports(),
             scene_nodes_by_plant: scenes,
             runway: self.world.runway_projection(),
@@ -848,7 +854,7 @@ async fn api_step_small(
     let Some(inst) = games.get_mut(&game_id) else {
         return bad_request("Game not found");
     };
-    let target = inst.world.now.add_ms(req.max_horizon_ms.max(1_000));
+    let target = inst.world.now.add_ms(req.max_horizon_ms.max(1));
     inst.world.advance_to(target);
     Json(inst.to_client_snapshot()).into_response()
 }
@@ -1054,7 +1060,7 @@ async fn handle_ws_session(mut socket: WebSocket, state: AppState, game_id: Stri
                     }
                 }
                 WsClientMessage::Step { delta_ms } => {
-                    let target = inst.world.now.add_ms(delta_ms.max(1_000));
+                    let target = inst.world.now.add_ms(delta_ms.max(1));
                     inst.world.advance_to(target);
                     WsServerMessage::Snapshot {
                         to_version: inst.world.version,

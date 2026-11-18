@@ -274,6 +274,29 @@ export interface LedgerRecord {
   memo: string;
 }
 
+export interface SquareEndpoint {
+  cell_id: string;
+  square_name: string;
+  access_point: PointMm;
+}
+
+/** Walking route for one material flow (fsim-layout-graph::LayoutRoute). */
+export interface LayoutRoute {
+  from_cell: string;
+  from_square: string;
+  to_cell: string;
+  to_square: string;
+  waypoints: PointMm[];
+  distance_mm: number;
+  forklift_feasible: boolean;
+}
+
+export interface TransportGraph {
+  layout_version: number;
+  endpoints: [[string, string], SquareEndpoint][];
+  routes: [[[string, string], [string, string]], LayoutRoute][];
+}
+
 export interface SimWorld {
   game_id: string;
   scenario_name: string;
@@ -292,7 +315,7 @@ export interface SimWorld {
   pipeline: Record<string, PipelineItem>;
   loans: Record<string, unknown>;
   ledger: { entries: LedgerRecord[]; account_balances: Record<string, number> };
-  gateway: { log_entries: unknown[] };
+  transport_graphs: Record<string, TransportGraph>;
 }
 
 export interface CellStatusReport {
@@ -350,6 +373,7 @@ export interface ClientGameSnapshot {
   bottleneck: BottleneckReport;
   checkpoints: CheckpointMeta[];
   last_skip_summary: SkipSummaryCard | null;
+  gateway_log_len: number;
 }
 
 export interface UserAccount {

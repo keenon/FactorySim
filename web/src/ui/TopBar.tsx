@@ -1,4 +1,5 @@
 import { formatMoney, formatSimDate, type Currency, type UnitSystem } from '../logic/format';
+import { SPEEDS } from '../state/GameClient';
 import { useGameClient } from '../state/useGameClient';
 
 export function TopBar() {
@@ -18,10 +19,17 @@ export function TopBar() {
           <span className="pill-label">Clock</span>
           {formatSimDate(snap.world.now)}
         </span>
-        <button className="btn" disabled={client.busy} onClick={() => void client.step(6)}>
-          +6 h
-        </button>
-        <button className="btn btn-primary" disabled={client.busy} onClick={() => void client.skipAhead(7)} title="Space">
+        <div className="speed-control" role="group" aria-label="Simulation speed">
+          <button className={`btn btn-sm ${client.playing ? '' : 'active'}`} onClick={() => client.setPlaying(false)} title="Pause (Space)">
+            ❚❚
+          </button>
+          {SPEEDS.map((s) => (
+            <button key={s} className={`btn btn-sm ${client.playing && client.speed === s ? 'active' : ''}`} onClick={() => client.setSpeed(s)} title={`Play at ${s}× (Space toggles)`}>
+              {s === 1 ? '▶' : `${s}×`}
+            </button>
+          ))}
+        </div>
+        <button className="btn btn-primary" disabled={client.busy} onClick={() => void client.skipAhead(7)} title="N">
           Skip to next event ⏭
         </button>
       </div>

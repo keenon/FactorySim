@@ -11,6 +11,7 @@ React + TypeScript single-page app. Renders server state and sends commands; it 
 - **Core Invariants**:
   - The server mirror (`snapshot`, `catalogs`) changes only via `GameClient.applySnapshot` / lobby loads.
   - React re-renders on `GameClient.version` (`useSyncExternalStore`). The 3D view re-syncs on `sceneVersion`; live drags bump only `sceneVersion`, so dragging never re-renders React.
+  - Time: the server owns sim time. Play mode calls `/step` every `GameClient.TICK_MS` with `speed × tick`; the view draws at `GameClient.displayTimeMs`, advanced per frame by `logic/clock.ts::nextDisplayTime` (smooth, capped one-to-two ticks ahead of the server, snaps on rewind/skip). Worker trips are pre-planned timed segments, so drawing slightly ahead is exact.
   - Local placement checks (`logic/placement.ts`) are an instant preview; the server's `/validate-placement` verdict replaces them on drop.
 - **Execution Assumptions**: Scene is Z-up in meters (sim mm × 0.001). Model geometries/materials are shared and cached; entities rebuild only when their model key changes.
 
@@ -18,8 +19,8 @@ React + TypeScript single-page app. Renders server state and sends commands; it 
 - **`src/types.ts`**: hand-mirrored wire types of the Rust serde shapes (keep in sync with `fsim-core`, `fsim-protocols`, `fsim-plant-host`, `fsim-server`).
 - **`src/api.ts`**: `Api` interface + `createHttpApi()`.
 - **`src/state/GameClient.ts`**: central state class; **`useGameClient.ts`**: React subscription hook.
-- **`src/logic/`** (pure, tested): `format.ts`, `motion.ts` (`poseAt`, mirrors `fsim-motion`), `placement.ts` (footprints, preview checks, free-spot search).
-- **`src/scene/`**: `coords.ts` (pure mm↔m, cell transforms), `modelBuilder.ts` (`CellModel` → `THREE.Group`, fallback boxes, footprint outlines), `FloorScene.ts` (renderer, perspective camera + OrbitControls/WASD, lights/shadows, building, picking, drag-to-place, labels, spindle animation).
+- **`src/logic/`** (pure, tested): `format.ts`, `motion.ts` (`poseAt`, mirrors `fsim-motion`), `placement.ts` (footprints, preview checks, free-spot search), `clock.ts` (display time), `flows.ts` (route roles, upstream/downstream lists, floor ribbon + chevron geometry).
+- **`src/scene/`**: `coords.ts` (pure mm↔m, cell transforms), `modelBuilder.ts` (`CellModel` → `THREE.Group`, fallback boxes, footprint outlines), `FloorScene.ts` (renderer, perspective camera + OrbitControls/WASD, lights/shadows, building, picking, drag-to-place, hover/selection-only labels, walking workers, material-flow ribbons with upstream (blue) / downstream (amber) highlight for the selected cell, spindle animation).
 - **`src/ui/`**: `App.tsx` (shell + shortcuts), `AuthScreen`, `SetupScreen`, `TopBar`, `TutorialBanner`, `Inspector`, `Modals`, `Chips`, `tabs/{Plants,Markets,Floor,Timeline,Ledger,People}Tab.tsx`.
 - **`dist/`**: `index.html`, `styles.css` (light theme); `app.js` is the build output (gitignored).
 

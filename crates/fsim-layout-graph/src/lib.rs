@@ -66,20 +66,36 @@ pub struct TransportGraph {
     pub routes: BTreeMap<((String, String), (String, String)), LayoutRoute>,
 }
 
+/// Key of a handoff square: `(cell_id, square_name)`.
+pub type SquareKey = (String, String);
+
+/// Grid resolution and pedestrian body radius shared by graph routes and on-demand walking trips,
+/// so a worker's walk and the drawn route are the same path.
+pub const WALK_GRID_CELL_MM: i32 = 200;
+pub const WALK_BODY_RADIUS_MM: i32 = 250;
+
+/// Rasterizes the pedestrian navigation grid for a floor with machine footprints as obstacles.
+pub fn build_walk_grid(building: &PolygonWithHolesMm, obstacles: &[AabbMm]) -> NavGrid {
+    NavGrid::build(building, obstacles, WALK_GRID_CELL_MM, WALK_BODY_RADIUS_MM)
+}
+
 impl TransportGraph {
-    /// Derives the transport graph for all registered handoff squares on a plant floor.
+    /// Derives routes for the given directed material `flows` (output square -> input square),
+    /// walking around `obstacles` (machine footprints). Endpoints lying on or inside a footprint
+    /// edge snap to the nearest free grid cell, so squares at a cell's boundary stay reachable.
     pub fn build(
         layout_version: u64,
         building: &PolygonWithHolesMm,
         obstacles: &[AabbMm],
         squares: &[SquareEndpoint],
+        flows: &[(SquareKey, SquareKey)],
     ) -> Self {
-        let walk_grid = NavGrid::build(building, obstacles, 200, 250);
+        let walk_grid = build_walk_grid(building, obstacles);
         let forklift_spec = VehicleSpec::standard_forklift(true);
         let forklift_grid = NavGrid::build(
             building,
             obstacles,
-            200,
+            WALK_GRID_CELL_MM,
             forklift_spec.ClearanceRadiusMm(),
         );
         let mut endpoints = BTreeMap::new();
@@ -88,33 +104,30 @@ impl TransportGraph {
         }
 
         let mut routes = BTreeMap::new();
-        for a in squares {
-            for b in squares {
-                if a.cell_id == b.cell_id && a.square_name == b.square_name {
-                    continue;
-                }
-                if let Some((waypoints, distance_mm)) =
-                    plan_walk_path(&walk_grid, a.access_point, b.access_point)
-                {
-                    let forklift_feasible =
-                        plan_walk_path(&forklift_grid, a.access_point, b.access_point).is_some();
-                    let key = (
-                        (a.cell_id.clone(), a.square_name.clone()),
-                        (b.cell_id.clone(), b.square_name.clone()),
-                    );
-                    routes.insert(
-                        key,
-                        LayoutRoute {
-                            from_cell: a.cell_id.clone(),
-                            from_square: a.square_name.clone(),
-                            to_cell: b.cell_id.clone(),
-                            to_square: b.square_name.clone(),
-                            waypoints,
-                            distance_mm,
-                            forklift_feasible,
-                        },
-                    );
-                }
+        for (from, to) in flows {
+            let (Some(a), Some(b)) = (endpoints.get(from), endpoints.get(to)) else {
+                continue;
+            };
+            if from == to {
+                continue;
+            }
+            if let Some((waypoints, distance_mm)) =
+                plan_walk_path(&walk_grid, a.access_point, b.access_point)
+            {
+                let forklift_feasible =
+                    plan_walk_path(&forklift_grid, a.access_point, b.access_point).is_some();
+                routes.insert(
+                    (from.clone(), to.clone()),
+                    LayoutRoute {
+                        from_cell: from.0.clone(),
+                        from_square: from.1.clone(),
+                        to_cell: to.0.clone(),
+                        to_square: to.1.clone(),
+                        waypoints,
+                        distance_mm,
+                        forklift_feasible,
+                    },
+                );
             }
         }
 
@@ -175,9 +188,16 @@ mod tests {
             },
         ];
 
-        let graph = TransportGraph::build(1, &bldg, &obs, &squares);
+        let flows = vec![(
+            ("recv-1".to_string(), "out".to_string()),
+            ("cnc-1".to_string(), "part_in".to_string()),
+        )];
+        let graph = TransportGraph::build(1, &bldg, &obs, &squares, &flows);
         let route = graph.route("recv-1", "out", "cnc-1", "part_in").unwrap();
         assert!(route.distance_mm > 8_000); // Detours around obstacle
         assert!(!route.waypoints.is_empty());
+        // Only declared flows are routed.
+        assert!(graph.route("cnc-1", "part_in", "recv-1", "out").is_none());
+        assert_eq!(graph.routes.len(), 1);
     }
 }

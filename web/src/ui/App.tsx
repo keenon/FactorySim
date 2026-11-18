@@ -92,8 +92,8 @@ function useGlobalShortcuts() {
       if (e.key >= '1' && e.key <= '6') client.setTab(TABS[Number(e.key) - 1]);
       else if (e.key === ' ' && !e.repeat) {
         e.preventDefault();
-        void client.skipAhead(7);
-      } else if ((e.key === 'r' || e.key === 'R') && sel?.startsWith('plan-')) client.rotateDraft(sel);
+        client.togglePlay();
+      } else if ((e.key === 'n' || e.key === 'N') && !e.repeat) void client.skipAhead(7); else if ((e.key === 'r' || e.key === 'R') && sel?.startsWith('plan-')) client.rotateDraft(sel);
       else if ((e.key === 'Delete' || e.key === 'Backspace') && sel?.startsWith('plan-')) client.removeDraft(sel);
       else if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
         e.preventDefault();

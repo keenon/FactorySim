@@ -226,3 +226,19 @@ label.check { flex-direction: row; align-items: center; gap: 8px; }
 .modal { background: var(--surface); border-radius: 14px; padding: 22px; width: 480px; max-width: 92vw; box-shadow: var(--shadow-lg); display: flex; flex-direction: column; gap: 12px; }
 .skip-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; background: var(--surface-2); border-radius: var(--radius-sm); padding: 12px; }
 .event-list { padding-left: 18px; color: var(--text-2); }
+
+/* Speed control */
+.speed-control { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); overflow: hidden; }
+.speed-control .btn { border: none; border-radius: 0; border-right: 1px solid var(--border); min-width: 34px; }
+.speed-control .btn:last-child { border-right: none; }
+.speed-control .btn.active { background: var(--accent); color: #fff; }
+
+/* Material flows in the inspector (colors match the floor ribbons) */
+.flows { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.flows-title { font-size: 11px; font-weight: 650; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 4px; display: flex; align-items: center; gap: 6px; }
+.flow-key { width: 14px; height: 4px; border-radius: 2px; display: inline-block; }
+.flow-key.flow-in, .flow-in .flow-dot { background: #5d8fbf; }
+.flow-key.flow-out, .flow-out .flow-dot { background: #e09a45; }
+.flow-row { display: grid; grid-template-columns: 10px 1fr auto; gap: 8px; align-items: center; text-align: left; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px 8px; font: inherit; font-size: 12px; cursor: pointer; }
+.flow-row:hover { border-color: var(--accent); }
+.flow-dot { width: 8px; height: 8px; border-radius: 50%; }

@@ -16,6 +16,7 @@ import {
   type PlacementDraft,
 } from '../logic/placement';
 import type { Currency, UnitSystem } from '../logic/format';
+import { nextDisplayTime } from '../logic/clock';
 import type {
   BuildingListing,
   CellCatalogEntry,
@@ -50,7 +51,13 @@ const EMPTY_CATALOGS: StaticCatalogBundle = {
   preview_models: {},
 };
 
+export const SPEEDS = [1, 5, 30, 300] as const;
+export type Speed = (typeof SPEEDS)[number];
+
 export class GameClient {
+  /** Wall-clock interval between server steps while playing. */
+  static readonly TICK_MS = 250;
+
   // --- change tracking ---
   private listeners = new Set<() => void>();
   version = 0;
@@ -81,6 +88,14 @@ export class GameClient {
   generatedInvite: string | null = null;
   generatedReset: string | null = null;
   private draftSeq = 0;
+
+  // --- play / time ---
+  playing = false;
+  speed: Speed = 5;
+  /** Sim time the 3D view is currently drawing (smoothly interpolated while playing). */
+  displayTimeMs = 0;
+  private tickTimer: ReturnType<typeof setInterval> | null = null;
+  private tickInFlight = false;
 
   constructor(private readonly api: Api) {}
 
@@ -177,6 +192,7 @@ export class GameClient {
   }
 
   logout() {
+    this.setPlaying(false);
     return this.guarded(async () => {
       await this.api.logout().catch(() => undefined);
       this.api.setToken(null);
@@ -192,6 +208,7 @@ export class GameClient {
   }
 
   backToLobby() {
+    this.setPlaying(false);
     this.snapshot = null;
     this.drafts = [];
     this.undoStack = [];
@@ -227,6 +244,7 @@ export class GameClient {
   }
 
   openGame(gameId: string) {
+    this.setPlaying(false);
     return this.guarded(async () => this.applySnapshot(await this.api.getGame(gameId)));
   }
 
@@ -255,6 +273,7 @@ export class GameClient {
   }
 
   rewind(checkpointId: string) {
+    this.setPlaying(false);
     return this.guarded(async () => this.applySnapshot(await this.api.rewind(this.gameId, checkpointId)));
   }
 
@@ -302,6 +321,52 @@ export class GameClient {
   showBanner(message: string) {
     this.banner = message;
     this.notify();
+  }
+
+  // ---------- play controls (server owns time; the client only asks it to step) ----------
+  setPlaying(on: boolean) {
+    if (on === this.playing || (on && !this.snapshot)) return;
+    this.playing = on;
+    if (on) this.tickTimer = setInterval(() => void this.tick(), GameClient.TICK_MS);
+    else if (this.tickTimer) {
+      clearInterval(this.tickTimer);
+      this.tickTimer = null;
+    }
+    this.notify();
+  }
+
+  togglePlay() {
+    this.setPlaying(!this.playing);
+  }
+
+  setSpeed(speed: Speed) {
+    this.speed = speed;
+    this.notify();
+    this.setPlaying(true);
+  }
+
+  /** Called by the 3D view once per frame; returns the sim time to draw. */
+  advanceDisplayTime(dtWallMs: number): number {
+    const serverNow = this.world?.now ?? 0;
+    this.displayTimeMs = nextDisplayTime(this.displayTimeMs, serverNow, dtWallMs, this.speed, this.playing, this.speed * GameClient.TICK_MS * 2);
+    return this.displayTimeMs;
+  }
+
+  private async tick(): Promise<void> {
+    if (!this.playing || this.tickInFlight || !this.snapshot) return;
+    this.tickInFlight = true;
+    try {
+      const snap = await this.api.step(this.gameId, this.speed * GameClient.TICK_MS);
+      if (!this.playing) return;
+      this.applySnapshot(snap);
+      if (snap.runway.bankrupt) this.setPlaying(false);
+      this.notify();
+    } catch (err) {
+      this.banner = err instanceof Error ? err.message : String(err);
+      this.setPlaying(false);
+    } finally {
+      this.tickInFlight = false;
+    }
   }
 
   // ---------- planning mode (controller-side, never sent until commit) ----------

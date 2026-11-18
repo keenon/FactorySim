@@ -29,7 +29,7 @@ export function FloorTab() {
         <FloorToolbar plantName={plant.name} />
         <Viewport />
         <div className="viewport-hint">
-          Left-drag: orbit · Right-drag: pan · Wheel: zoom · WASD: move · Drag a machine or ghost to move it · R rotate · Del remove
+          Space play/pause · N next event · Left-drag orbit · Right-drag pan · Wheel zoom · WASD move · Drag a machine or ghost to move it · R rotate · Del remove · Hover for names
         </div>
       </div>
     </div>

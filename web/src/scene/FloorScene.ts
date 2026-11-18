@@ -9,9 +9,10 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DObject, CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import type { GameClient } from '../state/GameClient';
+import { chevronTriangles, plantRoutes, ribbonTriangles, routeRole, type RouteRole } from '../logic/flows';
 import { poseAt } from '../logic/motion';
 import { polygonBounds } from '../logic/placement';
-import type { BuildingListing, CellRunState, SceneNode } from '../types';
+import type { BuildingListing, CellRunState, LayoutRoute, SceneNode, WorkerState } from '../types';
 import { cellTransform, MM, originFromCenter } from './coords';
 import { buildCellModel, buildFallbackBox, buildFootprintOutline, type GhostStyle } from './modelBuilder';
 
@@ -38,6 +39,10 @@ export class FloorScene {
   private readonly buildingGroup = new THREE.Group();
   private readonly entityGroup = new THREE.Group();
   private readonly entities = new Map<string, Entity>();
+  private readonly routeGroup = new THREE.Group();
+  private routesKey = '';
+  private workers: WorkerState[] = [];
+  private labelShown = new Set<string>();
   private readonly selectionBox = new THREE.Box3Helper(new THREE.Box3(), new THREE.Color('#3f8f84'));
   private readonly hoverBox = new THREE.Box3Helper(new THREE.Box3(), new THREE.Color('#9cc9c2'));
   private readonly sun: THREE.DirectionalLight;
@@ -51,6 +56,7 @@ export class FloorScene {
   private keys = new Set<string>();
   private lastFrameTime = performance.now();
   private hoveredId: string | null = null;
+  private hoveredPickId: string | null = null;
   private pointerNdc: THREE.Vector2 | null = null;
   private drag: null | {
     kind: 'draft' | 'cell';
@@ -108,7 +114,7 @@ export class FloorScene {
 
     this.selectionBox.visible = false;
     this.hoverBox.visible = false;
-    this.scene.add(this.buildingGroup, this.entityGroup, this.selectionBox, this.hoverBox);
+    this.scene.add(this.buildingGroup, this.routeGroup, this.entityGroup, this.selectionBox, this.hoverBox);
 
     this.bindInput();
   }
@@ -170,7 +176,9 @@ export class FloorScene {
     }
     this.applyKeyboardPan(dt);
     this.animate(dt);
+    this.updateWorkers(dt * 1000, t);
     this.updateHover();
+    this.updateLabels();
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
     this.labelRenderer.render(this.scene, this.camera);
@@ -210,6 +218,7 @@ export class FloorScene {
     const listing = this.client.currentListing();
     if (!snap || !plantId || !listing) {
       this.clearEntities();
+      this.clearRoutes();
       return;
     }
     this.syncBuilding(listing);
@@ -248,21 +257,77 @@ export class FloorScene {
       seen.add(d.draft_id);
     }
 
-    for (const w of Object.values(snap.world.workers)) {
-      if (w.plant_id !== plantId) continue;
+    this.workers = Object.values(snap.world.workers).filter((w) => w.plant_id === plantId);
+    for (const w of this.workers) {
       const id = `worker-${w.worker_id}`;
       const busy = w.active_task !== null;
-      const ent = this.ensureEntity(id, busy ? 'busy' : 'idle', 'worker', w.worker_id, () => buildWorker(busy), w.name);
-      const pose = poseAt(w.motion_segments, snap.world.now) ?? w.current_pose;
-      ent.root.position.set(pose.x_mm * MM, pose.y_mm * MM, 0);
-      ent.root.rotation.set(0, 0, (pose.heading_mdeg / 1000) * (Math.PI / 180));
+      this.ensureEntity(id, busy ? `busy:${w.active_task!.task.category}` : 'idle', 'worker', w.worker_id, () => buildWorker(busy), `${w.name}${busy ? ` · ${w.active_task!.task.category}` : ''}`);
       seen.add(id);
     }
+    this.updateWorkers(0, performance.now());
+    this.syncRoutes(plantId, snap.world.transport_graphs[plantId]?.layout_version ?? 0);
 
     for (const [id, ent] of this.entities) {
       if (!seen.has(id)) this.removeEntity(id, ent);
     }
     this.updateSelectionBox();
+  }
+
+  /** Places workers at the client's smoothly advancing display time; bobs them while walking. */
+  private updateWorkers(dtWallMs: number, wallMs: number): void {
+    const t = this.client.advanceDisplayTime(dtWallMs);
+    for (const w of this.workers) {
+      const ent = this.entities.get(`worker-${w.worker_id}`);
+      if (!ent) continue;
+      const pose = poseAt(w.motion_segments, t) ?? w.current_pose;
+      const walking = w.motion_segments.some((s) => t > s.start_ms && t < s.end_ms && (s.start_pose.x_mm !== s.end_pose.x_mm || s.start_pose.y_mm !== s.end_pose.y_mm));
+      ent.root.position.set(pose.x_mm * MM, pose.y_mm * MM, walking ? Math.abs(Math.sin(wallMs / 110)) * 0.05 : 0);
+      ent.root.rotation.set(0, 0, (pose.heading_mdeg / 1000) * (Math.PI / 180));
+    }
+  }
+
+  /** Material-flow routes as subtle floor ribbons; routes into/out of the selected cell are highlighted. */
+  private syncRoutes(plantId: string, layoutVersion: number): void {
+    const selected = this.client.selectedEntityId;
+    const key = `${plantId}|${layoutVersion}|${selected ?? ''}`;
+    if (key === this.routesKey) return;
+    this.routesKey = key;
+    this.clearRoutes();
+    const routes = plantRoutes(this.client.world, plantId);
+    // Draw idle first so highlighted ribbons layer on top.
+    const ordered = [...routes].sort((a, b) => Number(routeRole(a, selected) !== 'idle') - Number(routeRole(b, selected) !== 'idle'));
+    for (const r of ordered) this.routeGroup.add(buildRoute(r, routeRole(r, selected)));
+  }
+
+  private clearRoutes(): void {
+    for (const child of [...this.routeGroup.children]) {
+      child.traverse((o) => {
+        if (o instanceof THREE.Mesh) {
+          o.geometry.dispose();
+          (o.material as THREE.Material).dispose();
+        }
+      });
+      child.removeFromParent();
+    }
+    this.routesKey = '';
+  }
+
+  private updateLabels(): void {
+    const want = new Set<string>();
+    if (this.hoveredPickId) want.add(this.hoveredPickId);
+    const sel = this.client.selectedEntityId;
+    if (sel) for (const [id, e] of this.entities) if (e.entityId === sel && e.kind !== 'square') want.add(id);
+    for (const id of this.labelShown) {
+      if (!want.has(id)) {
+        const l = this.entities.get(id)?.label;
+        if (l) l.visible = false;
+      }
+    }
+    for (const id of want) {
+      const l = this.entities.get(id)?.label;
+      if (l) l.visible = true;
+    }
+    this.labelShown = want;
   }
 
   private syncCell(node: SceneNode, cellId: string, state: CellRunState): void {
@@ -301,6 +366,7 @@ export class FloorScene {
       el.className = `scene-label scene-label-${kind}`;
       el.textContent = label;
       const obj = new CSS2DObject(el);
+      obj.visible = false; // names show only on hover / selection
       const box = new THREE.Box3().setFromObject(root);
       obj.position.set(0, 0, (box.isEmpty() ? 1 : box.max.z) + 0.35);
       root.add(obj);
@@ -481,9 +547,11 @@ export class FloorScene {
   private updateHover(): void {
     if (!this.pointerNdc || this.drag) {
       this.hoverBox.visible = false;
+      this.hoveredPickId = null;
       return;
     }
     const ent = this.pick(this.pointerNdc);
+    this.hoveredPickId = ent && ent.kind !== 'square' ? (ent.root.userData.pickId as string) : null;
     const id = ent && ent.kind !== 'square' ? ent.entityId : null;
     this.renderer.domElement.style.cursor = ent && (ent.kind === 'draft' || ent.kind === 'cell') ? 'grab' : 'default';
     if (id === this.hoveredId && !id) return;
@@ -598,5 +666,29 @@ function buildWorker(busy: boolean): THREE.Group {
   head.position.z = 1.48;
   for (const m of [body, vest, head]) m.castShadow = true;
   g.add(body, vest, head);
+  return g;
+}
+
+const ROUTE_STYLE: Record<RouteRole, { color: string; width: number; opacity: number; z: number }> = {
+  idle: { color: '#a99f8f', width: 110, opacity: 0.38, z: 0.008 },
+  in: { color: '#5d8fbf', width: 220, opacity: 0.9, z: 0.012 },
+  out: { color: '#e09a45', width: 220, opacity: 0.9, z: 0.012 },
+};
+
+function flatMesh(positions: number[], color: string, opacity: number): THREE.Mesh {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.renderOrder = 1;
+  return mesh;
+}
+
+function buildRoute(route: LayoutRoute, role: RouteRole): THREE.Group {
+  const style = ROUTE_STYLE[role];
+  const g = new THREE.Group();
+  g.add(flatMesh(ribbonTriangles(route.waypoints, style.width, style.z), style.color, style.opacity));
+  const chevrons = chevronTriangles(route.waypoints, role === 'idle' ? 2400 : 1000, role === 'idle' ? 110 : 190, style.z + 0.001);
+  if (chevrons.length > 0) g.add(flatMesh(chevrons, role === 'idle' ? '#8f8577' : '#ffffff', role === 'idle' ? 0.45 : 0.95));
   return g;
 }

@@ -18,9 +18,11 @@ use fsim_finishing_packing::{
     reference::reference_packing_time_ms, starter_finishing_packing_catalog,
 };
 use fsim_gateway::GatewayState;
-use fsim_geom::PointMm;
+use fsim_geom::{AabbMm, PointMm};
+use fsim_navgrid::NavGrid;
+use fsim_path_walk::plan_walk_path;
 use fsim_heat_treat::starter_heat_treat_catalog;
-use fsim_layout_graph::{SquareEndpoint, TransportGraph};
+use fsim_layout_graph::{build_walk_grid, SquareEndpoint, SquareKey, TransportGraph};
 use fsim_machining::{
     machining_cell_model,
     reference::{reference_cycle_time_ms, reference_scrap_permille},
@@ -104,6 +106,77 @@ pub fn catalog_preview_model(catalog: &CellCatalogEntry) -> Option<fsim_core::Ce
         )),
         _ => None,
     }
+}
+
+/// A cell's handoff square in world coordinates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SquarePlacement {
+    pub name: String,
+    pub is_input: bool,
+    pub position_mm: PointMm,
+    pub accepted_skus: Vec<String>,
+}
+
+/// Distance of handoff squares in front of the footprint's front face (local y = 0).
+pub const SQUARE_SETBACK_MM: i32 = 300;
+
+/// Handoff square positions for a cell: inputs spaced along the front-left, the output at the
+/// front-right, all `SQUARE_SETBACK_MM` in front of the operator face. Computed in the cell's
+/// local frame and rotated about the footprint center exactly like the viewer's `cellTransform`.
+pub fn square_layout(catalog: &CellCatalogEntry, x_mm: i32, y_mm: i32, rotation_deg: i32) -> Vec<SquarePlacement> {
+    let w = catalog.width_mm;
+    let d = catalog.depth_mm;
+    let to_world = |lx: i32, ly: i32| -> PointMm {
+        let (ox, oy) = (2 * lx - w, 2 * ly - d); // doubled offsets from center keep integer math exact
+        let (rx, ry) = match rotation_deg.rem_euclid(360) {
+            90 => (-oy, ox),
+            180 => (-ox, -oy),
+            270 => (oy, -ox),
+            _ => (ox, oy),
+        };
+        let fp = catalog.footprint_at(x_mm, y_mm, rotation_deg);
+        PointMm::new((2 * fp.min_x + fp.width_mm() + rx) / 2, (2 * fp.min_y + fp.depth_mm() + ry) / 2)
+    };
+    let mut out = Vec::new();
+    let n_in = catalog.input_squares.len() as i32;
+    let in_span = if catalog.output_square_skus.is_empty() { w } else { w * 2 / 3 };
+    for (i, (name, skus)) in catalog.input_squares.iter().enumerate() {
+        let lx = in_span * (2 * i as i32 + 1) / (2 * n_in.max(1));
+        out.push(SquarePlacement {
+            name: name.clone(),
+            is_input: true,
+            position_mm: to_world(lx, -SQUARE_SETBACK_MM),
+            accepted_skus: skus.clone(),
+        });
+    }
+    if !catalog.output_square_skus.is_empty() {
+        let lx = if n_in == 0 { w / 2 } else { w * 5 / 6 };
+        out.push(SquarePlacement {
+            name: "out".to_string(),
+            is_input: false,
+            position_mm: to_world(lx, -SQUARE_SETBACK_MM),
+            accepted_skus: catalog.output_square_skus.clone(),
+        });
+    }
+    out
+}
+
+/// Directed material flows on a floor: every output square to every input square of another
+/// cell that accepts at least one SKU the output can produce. This is the upstream/downstream
+/// dependency graph that logistics moves travel along.
+pub fn material_flows(squares: &[&HandoffSquare]) -> Vec<(SquareKey, SquareKey)> {
+    let mut flows = Vec::new();
+    for out in squares.iter().filter(|s| !s.is_input) {
+        for inp in squares.iter().filter(|s| s.is_input && s.cell_id != out.cell_id) {
+            if inp.accepted_skus.iter().any(|sku| out.accepted_skus.contains(sku)) {
+                flows.push((
+                    (out.cell_id.clone(), out.square_name.clone()),
+                    (inp.cell_id.clone(), inp.square_name.clone()),
+                ));
+            }
+        }
+    }
+    flows
 }
 
 /// Returns the combined starter catalog across all teams.
@@ -232,6 +305,9 @@ pub struct SimWorld {
     pub next_market_poll_at: SimTime,
     pub next_monthly_overhead_at: SimTime,
     pub event_counter: u64,
+    /// Derived per-plant walk grid keyed by layout version; pure function of the layout, never serialized.
+    #[serde(skip)]
+    pub nav_cache: BTreeMap<String, (u64, NavGrid)>,
 }
 
 impl SimWorld {
@@ -275,6 +351,7 @@ impl SimWorld {
             next_market_poll_at: SimTime::from_hours(4),
             next_monthly_overhead_at: SimTime::from_days(30),
             event_counter: 0,
+            nav_cache: BTreeMap::new(),
         }
     }
 
@@ -561,7 +638,7 @@ impl SimWorld {
                     cert_fingerprint: format!("sha256:dev-{cell_id}"),
                 });
 
-                self.register_cell_squares(&cell_id, &catalog, x_mm, y_mm);
+                self.register_cell_squares(&cell_id, &catalog, x_mm, y_mm, rotation_deg);
 
                 let installed = InstalledCell {
                     cell_id: cell_id.clone(),
@@ -665,7 +742,7 @@ impl SimWorld {
                     format!("Rigging & recommissioning move for {cell_id}"),
                     cell_id.clone(),
                 );
-                self.update_cell_square_positions(&cell_id, &catalog, x_mm, y_mm);
+                self.update_cell_square_positions(&cell_id, &catalog, x_mm, y_mm, rotation_deg);
                 self.rebuild_transport_graph(&plant_id);
                 Ok(format!("Moved cell '{cell_id}'"))
             }
@@ -709,6 +786,7 @@ impl SimWorld {
                     "Casey Novak",
                 ];
                 let name = names[(self.workers.len()) % names.len()].to_string();
+                let spawn = self.free_floor_point(&plant_id, PointMm::new(600, 600));
 
                 let worker = WorkerState {
                     worker_id: worker_id.clone(),
@@ -721,7 +799,7 @@ impl SimWorld {
                     ready_at,
                     worked_ms_in_domain: 0,
                     quit_risk_permille: 12,
-                    current_pose: Pose2D::new(1_500, 1_500, 0),
+                    current_pose: Pose2D::new(spawn.x, spawn.y, 0),
                     motion_segments: Vec::new(),
                     active_task: None,
                     dispatch_count: 0,
@@ -943,7 +1021,7 @@ impl SimWorld {
                 device_kind: "machine-controller".to_string(),
                 cert_fingerprint: format!("sha256:dev-{cell_id}"),
             });
-            self.register_cell_squares(cell_id, &catalog, x_mm, y_mm);
+            self.register_cell_squares(cell_id, &catalog, x_mm, y_mm, 0);
             self.cells.insert(
                 cell_id.to_string(),
                 InstalledCell {
@@ -978,24 +1056,15 @@ impl SimWorld {
         catalog: &CellCatalogEntry,
         x_mm: i32,
         y_mm: i32,
+        rotation_deg: i32,
     ) {
-        for (idx, (sq_name, skus)) in catalog.input_squares.iter().enumerate() {
+        for sq in square_layout(catalog, x_mm, y_mm, rotation_deg) {
             self.buffers.register_square(HandoffSquare {
                 cell_id: cell_id.to_string(),
-                square_name: sq_name.clone(),
-                is_input: true,
-                position_mm: PointMm::new(x_mm, y_mm + (idx as i32) * 500),
-                accepted_skus: skus.clone(),
-                occupant: None,
-            });
-        }
-        if !catalog.output_square_skus.is_empty() {
-            self.buffers.register_square(HandoffSquare {
-                cell_id: cell_id.to_string(),
-                square_name: "out".to_string(),
-                is_input: false,
-                position_mm: PointMm::new(x_mm + catalog.width_mm, y_mm + catalog.depth_mm / 2),
-                accepted_skus: catalog.output_square_skus.clone(),
+                square_name: sq.name,
+                is_input: sq.is_input,
+                position_mm: sq.position_mm,
+                accepted_skus: sq.accepted_skus,
                 occupant: None,
             });
         }
@@ -1007,23 +1076,24 @@ impl SimWorld {
         catalog: &CellCatalogEntry,
         x_mm: i32,
         y_mm: i32,
+        rotation_deg: i32,
     ) {
-        for (idx, (sq_name, _)) in catalog.input_squares.iter().enumerate() {
-            if let Some(sq) = self
-                .buffers
-                .squares
-                .get_mut(&(cell_id.to_string(), sq_name.clone()))
-            {
-                sq.position_mm = PointMm::new(x_mm, y_mm + (idx as i32) * 500);
+        for sq in square_layout(catalog, x_mm, y_mm, rotation_deg) {
+            if let Some(existing) = self.buffers.squares.get_mut(&(cell_id.to_string(), sq.name)) {
+                existing.position_mm = sq.position_mm;
             }
         }
-        if let Some(sq) = self
-            .buffers
-            .squares
-            .get_mut(&(cell_id.to_string(), "out".to_string()))
-        {
-            sq.position_mm = PointMm::new(x_mm + catalog.width_mm, y_mm + catalog.depth_mm / 2);
-        }
+    }
+
+    /// Footprints (rotated, not inflated) of every cell on `plant_id`: the walking obstacles.
+    fn plant_obstacles(&self, plant_id: &str) -> Vec<AabbMm> {
+        self.cells
+            .values()
+            .filter(|c| c.plant_id == plant_id)
+            .filter_map(|c| {
+                Self::lookup_catalog(&c.catalog_id).map(|cat| cat.footprint_at(c.x_mm, c.y_mm, c.rotation_deg))
+            })
+            .collect()
     }
 
     fn rebuild_transport_graph(&mut self, plant_id: &str) {
@@ -1036,26 +1106,57 @@ impl SimWorld {
             return;
         };
 
-        let mut squares = Vec::new();
-        for sq in self.buffers.squares.values() {
-            if self
-                .cells
-                .get(&sq.cell_id)
-                .map(|c| c.plant_id == plant_id)
-                .unwrap_or(false)
-            {
-                squares.push(SquareEndpoint {
-                    cell_id: sq.cell_id.clone(),
-                    square_name: sq.square_name.clone(),
-                    access_point: sq.position_mm,
-                });
-            }
-        }
-
-        // We pass empty obstacles for square-to-square access points so squares on cell boundaries remain reachable,
-        // while building walls and interior column holes are strictly respected.
-        let graph = TransportGraph::build(layout_ver, &listing.floor_polygon, &[], &squares);
+        let plant_squares: Vec<&HandoffSquare> = self
+            .buffers
+            .squares
+            .values()
+            .filter(|sq| self.cells.get(&sq.cell_id).map(|c| c.plant_id == plant_id).unwrap_or(false))
+            .collect();
+        let endpoints: Vec<SquareEndpoint> = plant_squares
+            .iter()
+            .map(|sq| SquareEndpoint {
+                cell_id: sq.cell_id.clone(),
+                square_name: sq.square_name.clone(),
+                access_point: sq.position_mm,
+            })
+            .collect();
+        let flows = material_flows(&plant_squares);
+        let obstacles = self.plant_obstacles(plant_id);
+        let graph = TransportGraph::build(layout_ver, &listing.floor_polygon, &obstacles, &endpoints, &flows);
         self.transport_graphs.insert(plant_id.to_string(), graph);
+        self.nav_cache.remove(plant_id);
+    }
+
+    /// Pedestrian path between two floor points on `plant_id`, around machine footprints.
+    /// The nav grid is a pure function of the layout, cached (not serialized) per layout version.
+    fn walk_path(&mut self, plant_id: &str, from: PointMm, to: PointMm) -> Vec<PointMm> {
+        let Some(plant) = self.plants.get(plant_id) else {
+            return vec![from, to];
+        };
+        let layout_ver = plant.layout_version;
+        let stale = self.nav_cache.get(plant_id).map(|(v, _)| *v != layout_ver).unwrap_or(true);
+        if stale {
+            let Some(listing) = Self::lookup_listing(&plant.listing_id) else {
+                return vec![from, to];
+            };
+            let grid = build_walk_grid(&listing.floor_polygon, &self.plant_obstacles(plant_id));
+            self.nav_cache.insert(plant_id.to_string(), (layout_ver, grid));
+        }
+        let grid = &self.nav_cache[plant_id].1;
+        plan_walk_path(grid, from, to).map(|(pts, _)| pts).unwrap_or_else(|| vec![from, to])
+    }
+
+    /// Nearest walkable floor point to `near` (e.g. a spawn point for a new hire).
+    fn free_floor_point(&mut self, plant_id: &str, near: PointMm) -> PointMm {
+        // A zero-length walk forces the cached grid to exist and snaps nothing; query the grid directly.
+        let _ = self.walk_path(plant_id, near, near);
+        match self.nav_cache.get(plant_id) {
+            Some((_, grid)) => {
+                let (gx, gy) = grid.point_to_grid(near);
+                grid.nearest_passable(gx, gy).map(|(x, y)| grid.grid_to_point(x, y)).unwrap_or(near)
+            }
+            None => near,
+        }
     }
 
     /// Returns the earliest timestamp at which any module, worker, cell, pipeline item, or market poll expects an event.
@@ -1696,10 +1797,12 @@ impl SimWorld {
             .map(|v| v.iter().any(|u| u.spec.item_sku == item_sku))
             .unwrap_or(false)
         {
+            // Stock is handed out at the receiving bench's output square (where the flow routes start).
             let pt = self
-                .cells
-                .get(&recv_id)
-                .map(|c| PointMm::new(c.x_mm, c.y_mm))
+                .buffers
+                .get_square(&recv_id, "out")
+                .map(|s| s.position_mm)
+                .or_else(|| self.cells.get(&recv_id).map(|c| PointMm::new(c.x_mm, c.y_mm)))
                 .unwrap_or(PointMm::new(500, 500));
             return Some((recv_id, "rack".to_string(), pt));
         }
@@ -1998,12 +2101,19 @@ impl SimWorld {
                 &self.shift_priorities,
             ) {
                 let task = self.pending_tasks.remove(idx);
+                // Walk around machines: current spot -> pickup, then pickup -> drop-off.
+                let to_start = self.walk_path(&task.plant_id, worker_snapshot.current_pose.point(), task.location_mm);
+                let to_dest = if task.destination_mm != task.location_mm {
+                    self.walk_path(&task.plant_id, task.location_mm, task.destination_mm)
+                } else {
+                    Vec::new()
+                };
                 let w = self.workers.get_mut(&wid).unwrap();
                 let active = dispatch_task_to_worker(
                     w,
                     task.clone(),
-                    &[],
-                    &[],
+                    &to_start,
+                    &to_dest,
                     self.now,
                     self.game_seed,
                 );
@@ -2332,6 +2442,123 @@ mod tests {
         assert!(world.ledger.is_balanced());
         assert!(world.gateway.verify_integrity());
         assert!(!world.gateway.log_entries.is_empty());
+    }
+
+    #[test]
+    fn test_square_layout_sits_just_outside_the_rotated_front_face() {
+        let cat = SimWorld::lookup_catalog("pack-manual-station").unwrap();
+        for rot in [0, 90, 180, 270] {
+            let fp = cat.footprint_at(4_000, 3_000, rot);
+            let squares = square_layout(&cat, 4_000, 3_000, rot);
+            assert_eq!(squares.len(), 3); // part_in, consumable_in, out
+            for sq in &squares {
+                assert!(!fp.contains_strict_interior(sq.position_mm), "rot {rot}: {} inside footprint", sq.name);
+                assert!(fp.inflate(SQUARE_SETBACK_MM).contains_point(sq.position_mm), "rot {rot}: {} too far", sq.name);
+            }
+        }
+        // 180° mirrors positions through the footprint center.
+        let a = square_layout(&cat, 4_000, 3_000, 0);
+        let b = square_layout(&cat, 4_000, 3_000, 180);
+        let c = cat.footprint_at(4_000, 3_000, 0).center();
+        for (p, q) in a.iter().zip(&b) {
+            assert_eq!(p.position_mm.x + q.position_mm.x, 2 * c.x);
+            assert_eq!(p.position_mm.y + q.position_mm.y, 2 * c.y);
+        }
+    }
+
+    fn tutorial_world(seed: u64) -> SimWorld {
+        let mut world = SimWorld::new("g", "s", seed);
+        for cmd in [
+            PlantCommand::LeasePlant { plant_id: "plant-1".into(), listing_id: "bldg-suburban-bay".into(), name: "P".into() },
+            PlantCommand::PlaceCell {
+                plant_id: "plant-1".into(),
+                cell_id: "cnc-1".into(),
+                team: TeamTag::Machining,
+                catalog_id: "cnc-3axis-vmc".into(),
+                addons: vec![],
+                x_mm: 5_000,
+                y_mm: 4_000,
+                rotation_deg: 0,
+            },
+            PlantCommand::PlaceCell {
+                plant_id: "plant-1".into(),
+                cell_id: "pack-1".into(),
+                team: TeamTag::FinishingPacking,
+                catalog_id: "pack-manual-station".into(),
+                addons: vec![],
+                x_mm: 10_000,
+                y_mm: 4_000,
+                rotation_deg: 0,
+            },
+            PlantCommand::HireWorker {
+                plant_id: "plant-1".into(),
+                worker_id: "worker-1".into(),
+                role: "Op".into(),
+                wage_per_hour_tenth_cents: Money::from_dollars(32).0,
+            },
+            PlantCommand::ConfigureMarketPolicy {
+                plant_id: "plant-1".into(),
+                market_id: "mkt-prototyping-online".into(),
+                enabled: true,
+                min_payout_per_hour_tenth_cents: Money::from_dollars(80).0,
+                price_multiplier_pct: 100,
+                promised_lead_days: 7,
+            },
+        ] {
+            world.apply_command(cmd).unwrap();
+        }
+        world
+    }
+
+    #[test]
+    fn test_transport_graph_routes_exactly_the_material_flows() {
+        let world = tutorial_world(1);
+        let graph = &world.transport_graphs["plant-1"];
+        let mut edges: Vec<String> = graph
+            .routes
+            .values()
+            .map(|r| format!("{}:{}->{}:{}", r.from_cell, r.from_square, r.to_cell, r.to_square))
+            .collect();
+        edges.sort();
+        assert_eq!(
+            edges,
+            vec![
+                "cnc-1:out->pack-1:part_in",
+                "pack-1:out->plant-1-ship:part_in",
+                "plant-1-recv:out->cnc-1:part_in",
+                "plant-1-recv:out->pack-1:consumable_in",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_workers_walk_around_machine_footprints() {
+        let mut world = tutorial_world(12345);
+        let footprints: Vec<fsim_geom::AabbMm> = world
+            .cells
+            .values()
+            .map(|c| SimWorld::lookup_catalog(&c.catalog_id).unwrap().footprint_at(c.x_mm, c.y_mm, c.rotation_deg))
+            .collect();
+        let mut checked_segments = 0;
+        let mut t = SimTime::ZERO;
+        while t < SimTime::from_days(16) {
+            t = t.add_ms(SimTime::HOUR_MS);
+            world.advance_to(t);
+            for w in world.workers.values() {
+                for seg in &w.motion_segments {
+                    checked_segments += 1;
+                    for i in 0..=10 {
+                        let x = seg.start_pose.x_mm + (seg.end_pose.x_mm - seg.start_pose.x_mm) * i / 10;
+                        let y = seg.start_pose.y_mm + (seg.end_pose.y_mm - seg.start_pose.y_mm) * i / 10;
+                        for fp in &footprints {
+                            // Endpoints snap to the nearest free grid cell, so allow one grid cell of slack.
+                            assert!(!fp.inflate(-200).contains_point(fsim_geom::PointMm::new(x, y)), "walked through a machine at ({x},{y})");
+                        }
+                    }
+                }
+            }
+        }
+        assert!(checked_segments > 0, "worker never walked");
     }
 
     #[test]

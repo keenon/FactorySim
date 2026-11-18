@@ -48,7 +48,7 @@ export function LedgerTab() {
             <dt>Shadow value</dt>
             <dd>${bn.shadow_price_dollars_per_hr}/hr</dd>
             <dt>Gateway log</dt>
-            <dd>{world.gateway.log_entries.length} entries</dd>
+            <dd>{snap.gateway_log_len} entries</dd>
           </dl>
         </section>
         <section className="card">
