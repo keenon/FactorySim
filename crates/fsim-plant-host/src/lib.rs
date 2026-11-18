@@ -403,15 +403,15 @@ impl SimWorld {
                     &plant_id,
                     &format!("{plant_id}-recv"),
                     "mat-receiving-bench",
-                    500,
-                    500,
+                    1_200,
+                    1_200,
                 );
                 self.install_support_cell_internal(
                     &plant_id,
                     &format!("{plant_id}-ship"),
                     "mat-shipping-bay",
-                    500,
-                    2_500,
+                    1_200,
+                    4_800,
                 );
                 // Seed initial starter stock of precut blanks and cardboard cartons at the plant's rack
                 let rack_id = format!("{plant_id}-recv");

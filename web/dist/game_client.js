@@ -3,9 +3,10 @@
 // - The server owns simulation state; the browser never simulates.
 // - One central OOP state class (`GameClient`) holds a mirror of the server's estimated state
 //   plus UI-local state (active tab, selected plant, selected entity, planning mode drafts,
-//   undo stack, camera, unit/currency settings).
+//   undo stack, 3D orbit camera, unit/currency settings).
 // - Complex logic is factored into pure, unit-tested functions (`poseAt`, `formatMoney`,
-//   `formatDimension`, `projectIso3D`, `packScenePrimitives`).
+//   `formatDimension`, `project3DPoint`, `unprojectScreenToFloorMm`, `validateDraftLocally`,
+//   `packScenePrimitives`, `hitTestPrimitiveAtScreen`).
 
 /**
  * Interpolates millidegree angles across the 0..360_000 boundary (matches `fsim-motion::reference`).
@@ -96,25 +97,181 @@ export function formatDimension(mm, unitSystem = 'metric') {
 }
 
 /**
- * Pure 3D top-down / tilted isometric projection from millimeter world coordinates
- * `(x_mm, y_mm, z_mm)` to 2D canvas screen coordinates `(sx, sy)`.
+ * True 3D isometric / orbital projection from millimeter world coordinates
+ * `(x_mm, y_mm, z_mm)` to 2D canvas screen coordinates `(sx, sy, depth)`.
+ *
+ * Camera parameters:
+ * - `yawRad`: horizontal rotation angle around the vertical Z axis (default `0.62` rad ≈ 35.5°)
+ * - `pitchRad`: elevation tilt angle from top-down (`0.0` = top-down, `0.95` = 55° 3D tilt)
+ * - `zoom`: pixels per millimeter (default `0.028`)
+ * - `panX`, `panY`: screen center offset in pixels
+ *
  * @param {number} x_mm
  * @param {number} y_mm
  * @param {number} z_mm
- * @param {{panX: number, panY: number, zoom: number, tilt: number}} camera
- * @returns {{sx: number, sy: number}}
+ * @param {{panX: number, panY: number, zoom: number, yawRad?: number, pitchRad?: number, tilt?: number}} camera
+ * @returns {{sx: number, sy: number, depth: number}}
  */
 export function project3DPoint(x_mm, y_mm, z_mm, camera) {
-  const scale = camera.zoom || 0.042;
-  const tilt = camera.tilt ?? 0.55; // 1.0 = flat top-down, 0.55 = tilted 3D view
-  const sx = camera.panX + x_mm * scale;
-  const sy = camera.panY + y_mm * scale * tilt - z_mm * scale * (1.0 - tilt * 0.4);
-  return { sx, sy };
+  const scale = camera.zoom || 0.028;
+  const yaw = camera.yawRad ?? 0.58;
+  const pitch = camera.pitchRad ?? (camera.tilt !== undefined ? camera.tilt : 0.88);
+
+  const cosY = Math.cos(yaw);
+  const sinY = Math.sin(yaw);
+  const cosP = Math.cos(pitch);
+  const sinP = Math.sin(pitch);
+
+  // Rotate around Z axis (floor plane)
+  const rx = x_mm * cosY - y_mm * sinY;
+  const ry = x_mm * sinY + y_mm * cosY;
+
+  // Tilt by pitch and elevate Z upwards on screen
+  const sx = camera.panX + rx * scale;
+  const sy = camera.panY + (ry * cosP - z_mm * sinP) * scale;
+  const depth = ry * sinP + z_mm * cosP;
+  return { sx, sy, depth };
+}
+
+/**
+ * Inverse projection from 2D canvas screen coordinates `(sx, sy)` onto the `z_mm = 0`
+ * factory floor plane `(x_mm, y_mm)`. Exact inverse of `project3DPoint(x, y, 0, camera)`.
+ *
+ * @param {number} sx
+ * @param {number} sy
+ * @param {{panX: number, panY: number, zoom: number, yawRad?: number, pitchRad?: number, tilt?: number}} camera
+ * @returns {{x_mm: number, y_mm: number}}
+ */
+export function unprojectScreenToFloorMm(sx, sy, camera) {
+  const scale = camera.zoom || 0.028;
+  const yaw = camera.yawRad ?? 0.58;
+  const pitch = camera.pitchRad ?? (camera.tilt !== undefined ? camera.tilt : 0.88);
+
+  const cosY = Math.cos(yaw);
+  const sinY = Math.sin(yaw);
+  const cosP = Math.max(0.15, Math.cos(pitch));
+
+  const rx = (sx - camera.panX) / scale;
+  const ry = (sy - camera.panY) / (scale * cosP);
+
+  const x_mm = Math.round(rx * cosY + ry * sinY);
+  const y_mm = Math.round(-rx * sinY + ry * cosY);
+  return { x_mm, y_mm };
+}
+
+/**
+ * Instant client-side placement validator for planning-mode ghost cells and live dragging.
+ * Checks building boundaries, column holes, clear height, door opening fit, and overlap
+ * against both installed cells and other planned ghost cells.
+ *
+ * @param {object} draft
+ * @param {object} listing
+ * @param {Array<object>} installedCells
+ * @param {Array<object>} allCatalogs
+ * @param {Array<object>} otherDrafts
+ * @returns {{valid: boolean, errors: Array<string>}}
+ */
+export function validateDraftLocally(
+  draft,
+  listing,
+  installedCells = [],
+  allCatalogs = [],
+  otherDrafts = []
+) {
+  const errors = [];
+  if (!listing) {
+    return { valid: true, errors };
+  }
+
+  const rot = ((draft.rotation_deg || 0) % 360 + 360) % 360;
+  const w = rot === 90 || rot === 270 ? draft.depth_mm : draft.width_mm;
+  const d = rot === 90 || rot === 270 ? draft.width_mm : draft.depth_mm;
+  const clearance = draft.clearance_mm ?? 300;
+
+  const minX = draft.x_mm - clearance;
+  const minY = draft.y_mm - clearance;
+  const maxX = draft.x_mm + w + clearance;
+  const maxY = draft.y_mm + d + clearance;
+
+  // Check building outer bounds
+  const outer = listing.floor_polygon?.outer || [];
+  if (outer.length >= 3) {
+    let bMinX = Infinity,
+      bMinY = Infinity,
+      bMaxX = -Infinity,
+      bMaxY = -Infinity;
+    for (const p of outer) {
+      bMinX = Math.min(bMinX, p.x);
+      bMinY = Math.min(bMinY, p.y);
+      bMaxX = Math.max(bMaxX, p.x);
+      bMaxY = Math.max(bMaxY, p.y);
+    }
+    if (minX < bMinX || minY < bMinY || maxX > bMaxX || maxY > bMaxY) {
+      errors.push('Footprint + clearance extends outside building walls');
+    }
+  }
+
+  // Check interior structural column holes
+  for (const hole of listing.floor_polygon?.holes || []) {
+    let hMinX = Infinity,
+      hMinY = Infinity,
+      hMaxX = -Infinity,
+      hMaxY = -Infinity;
+    for (const p of hole) {
+      hMinX = Math.min(hMinX, p.x);
+      hMinY = Math.min(hMinY, p.y);
+      hMaxX = Math.max(hMaxX, p.x);
+      hMaxY = Math.max(hMaxY, p.y);
+    }
+    if (minX < hMaxX && maxX > hMinX && minY < hMaxY && maxY > hMinY) {
+      errors.push('Overlaps an interior structural column');
+    }
+  }
+
+  if (draft.height_mm > listing.clear_height_mm) {
+    errors.push('Exceeds building clear height');
+  }
+
+  // Check overlap against installed cells
+  for (const c of installedCells) {
+    if (c.plant_id !== draft.plant_id) continue;
+    if (c.cell_id === draft.ignore_cell_id) continue;
+    const cat = allCatalogs.find((x) => x.catalog_id === c.catalog_id);
+    const cw = cat ? cat.width_mm : 2000;
+    const cd = cat ? cat.depth_mm : 2000;
+    const cc = cat ? cat.clearance_mm : 300;
+    const cMinX = c.x_mm - cc;
+    const cMinY = c.y_mm - cc;
+    const cMaxX = c.x_mm + cw + cc;
+    const cMaxY = c.y_mm + cd + cc;
+    if (minX < cMaxX && maxX > cMinX && minY < cMaxY && maxY > cMinY) {
+      errors.push(`Overlaps clearance of installed cell '${c.cell_id}'`);
+    }
+  }
+
+  // Check overlap against other planned ghost cells
+  for (const od of otherDrafts) {
+    if (od.draft_id === draft.draft_id || od.plant_id !== draft.plant_id) continue;
+    const oRot = ((od.rotation_deg || 0) % 360 + 360) % 360;
+    const ow = oRot === 90 || oRot === 270 ? od.depth_mm : od.width_mm;
+    const odDepth = oRot === 90 || oRot === 270 ? od.width_mm : od.depth_mm;
+    const oc = od.clearance_mm ?? 300;
+    const oMinX = od.x_mm - oc;
+    const oMinY = od.y_mm - oc;
+    const oMaxX = od.x_mm + ow + oc;
+    const oMaxY = od.y_mm + odDepth + oc;
+    if (minX < oMaxX && maxX > oMinX && minY < oMaxY && maxY > oMinY) {
+      errors.push(`Overlaps planned ghost '${od.display_name}'`);
+    }
+  }
+
+  return { valid: errors.length === 0, errors };
 }
 
 /**
  * Pure scene buffer packer that converts the server's estimated `ClientGameSnapshot` and
- * any local planning-mode ghost cells into sorted 3D extruded draw primitives for the canvas.
+ * any local planning-mode ghost cells into depth-sorted 3D solids for rendering and picking.
+ *
  * @param {object} snapshot
  * @param {string} plantId
  * @param {Array<object>} plannedDrafts
@@ -129,9 +286,12 @@ export function packScenePrimitives(snapshot, plantId, plannedDrafts = [], rende
   const primitives = [];
 
   for (const n of nodes) {
+    const isCell = n.node_id.startsWith('cell-');
+    const entityId = isCell ? n.node_id.slice(5) : n.node_id;
     primitives.push({
       id: n.node_id,
-      kind: 'cell_or_square',
+      entityId,
+      kind: isCell ? 'cell' : 'square',
       x_mm: n.x_mm,
       y_mm: n.y_mm,
       z_mm: n.z_mm || 0,
@@ -142,25 +302,32 @@ export function packScenePrimitives(snapshot, plantId, plannedDrafts = [], rende
       label: n.label,
       ghost: Boolean(n.ghost),
       valid: true,
+      draggable: isCell,
     });
   }
 
-  // Add planning-mode ghost drafts with validity coloring
+  // Add planning-mode ghost drafts with instant validity coloring
   for (const draft of plannedDrafts) {
     if (draft.plant_id !== plantId) continue;
+    const rot = ((draft.rotation_deg || 0) % 360 + 360) % 360;
+    const w = rot === 90 || rot === 270 ? draft.depth_mm : draft.width_mm;
+    const d = rot === 90 || rot === 270 ? draft.width_mm : draft.depth_mm;
     primitives.push({
       id: draft.draft_id,
+      entityId: draft.draft_id,
       kind: 'planned_ghost',
       x_mm: draft.x_mm,
       y_mm: draft.y_mm,
       z_mm: 0,
-      width_mm: draft.width_mm,
-      depth_mm: draft.depth_mm,
+      width_mm: w,
+      depth_mm: d,
       height_mm: draft.height_mm,
+      clearance_mm: draft.clearance_mm ?? 300,
       color: draft.valid ? '#38bdf8' : '#ef4444',
-      label: `[PLANNED] ${draft.display_name}`,
+      label: `[PLAN] ${draft.display_name}`,
       ghost: true,
       valid: draft.valid,
+      draggable: true,
     });
   }
 
@@ -169,26 +336,91 @@ export function packScenePrimitives(snapshot, plantId, plannedDrafts = [], rende
   const tMs = renderNowMs || snapshot.world.now || 0;
   for (const w of workers) {
     if (w.plant_id !== plantId) continue;
-    const pose = poseAt(w.motion_segments || [], tMs) || w.current_pose || { x_mm: 1500, y_mm: 1500 };
+    const pose =
+      poseAt(w.motion_segments || [], tMs) || w.current_pose || { x_mm: 1500, y_mm: 1500 };
     primitives.push({
       id: `worker-${w.worker_id}`,
+      entityId: w.worker_id,
       kind: 'worker',
-      x_mm: pose.x_mm - 250,
-      y_mm: pose.y_mm - 250,
+      x_mm: pose.x_mm - 300,
+      y_mm: pose.y_mm - 300,
       z_mm: 0,
-      width_mm: 500,
-      depth_mm: 500,
+      width_mm: 600,
+      depth_mm: 600,
       height_mm: 1750,
       color: w.active_task ? '#10b981' : '#f8fafc',
-      label: `${w.name} (${w.active_task ? w.active_task.task.category : 'Idle on iPad'})`,
+      label: `${w.name}`,
       ghost: false,
       valid: true,
+      draggable: false,
     });
   }
 
-  // Sort back-to-front by `y_mm + depth_mm` for painter's algorithm 3D extrusion
-  primitives.sort((a, b) => a.y_mm + a.depth_mm - (b.y_mm + b.depth_mm));
+  // Painter's algorithm sort along 3D camera depth (`x + y`)
+  primitives.sort(
+    (a, b) => a.x_mm + a.y_mm + (a.width_mm + a.depth_mm) * 0.5 - (b.x_mm + b.y_mm + (b.width_mm + b.depth_mm) * 0.5)
+  );
   return primitives;
+}
+
+/**
+ * 2D point-in-polygon helper for screen-space 3D bounding-box hit testing.
+ */
+function pointInScreenPoly(sx, sy, pts) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i].sx,
+      yi = pts[i].sy;
+    const xj = pts[j].sx,
+      yj = pts[j].sy;
+    const intersect =
+      yi > sy !== yj > sy && sx < ((xj - xi) * (sy - yi)) / (yj - yi + 1e-9) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * Hit-tests the packed 3D primitives from front-to-back at canvas coordinates `(sx, sy)`.
+ * Checks both the 3D extruded roof/walls and the floor footprint so clicking any part of a 3D machine selects it.
+ *
+ * @param {Array<object>} primitives
+ * @param {number} sx
+ * @param {number} sy
+ * @param {object} camera
+ * @returns {object | null}
+ */
+export function hitTestPrimitiveAtScreen(primitives, sx, sy, camera) {
+  // Iterate front-to-back (reverse of painter's draw order)
+  for (let i = primitives.length - 1; i >= 0; i--) {
+    const p = primitives[i];
+    const x0 = p.x_mm,
+      y0 = p.y_mm,
+      x1 = p.x_mm + p.width_mm,
+      y1 = p.y_mm + p.depth_mm,
+      z1 = p.height_mm;
+
+    const b0 = project3DPoint(x0, y0, 0, camera);
+    const b1 = project3DPoint(x1, y0, 0, camera);
+    const b2 = project3DPoint(x1, y1, 0, camera);
+    const b3 = project3DPoint(x0, y1, 0, camera);
+
+    const t0 = project3DPoint(x0, y0, z1, camera);
+    const t1 = project3DPoint(x1, y0, z1, camera);
+    const t2 = project3DPoint(x1, y1, z1, camera);
+    const t3 = project3DPoint(x0, y1, z1, camera);
+
+    if (
+      pointInScreenPoly(sx, sy, [t0, t1, t2, t3]) ||
+      pointInScreenPoly(sx, sy, [b0, b1, b2, b3]) ||
+      pointInScreenPoly(sx, sy, [b3, b2, t2, t3]) ||
+      pointInScreenPoly(sx, sy, [b1, b2, t2, t1]) ||
+      pointInScreenPoly(sx, sy, [b0, b3, t3, t0])
+    ) {
+      return p;
+    }
+  }
+  return null;
 }
 
 /**
@@ -215,12 +447,19 @@ export class GameClient {
     this.activeTab = 'Plants'; // 'Plants' | 'Markets' | 'Floor' | 'Timeline' | 'Ledger' | 'People'
     this.selectedPlantId = null;
     this.selectedEntityId = null;
-    this.planningMode = false;
+    this.planningMode = true; // Default ON so placing from the palette drops instant draggable 3D ghosts!
     this.plannedCells = []; // controller-side planning ghosts
     this.undoStack = []; // snapshots of `plannedCells` for undo in planning mode
     this.unitSystem = 'metric'; // 'metric' | 'imperial'
     this.currency = 'USD'; // 'USD' | 'EUR'
-    this.camera = { panX: 60, panY: 70, zoom: 0.042, tilt: 0.62 };
+    // True 3D isometric orbit camera
+    this.camera = {
+      panX: 340,
+      panY: 110,
+      zoom: 0.025,
+      yawRad: 0.52,
+      pitchRad: 0.85,
+    };
     this.statusBanner = null;
   }
 
@@ -245,7 +484,31 @@ export class GameClient {
     if (plantIds.length === 0) {
       this.activeTab = 'Plants';
     }
+    this.revalidateAllPlannedCells();
     this.notify();
+  }
+
+  currentBuildingListing() {
+    if (!this.snapshot?.world || !this.selectedPlantId) return null;
+    const plant = this.snapshot.world.plants?.[this.selectedPlantId];
+    if (!plant) return null;
+    return (this.catalogs.buildings || []).find((b) => b.listing_id === plant.listing_id) || null;
+  }
+
+  revalidateAllPlannedCells() {
+    const listing = this.currentBuildingListing();
+    const installed = Object.values(this.snapshot?.world?.cells || {});
+    for (const draft of this.plannedCells) {
+      const res = validateDraftLocally(
+        draft,
+        listing,
+        installed,
+        this.catalogs.cells || [],
+        this.plannedCells
+      );
+      draft.valid = res.valid;
+      draft.errors = res.errors;
+    }
   }
 
   setTab(tabName) {
@@ -255,6 +518,7 @@ export class GameClient {
 
   selectPlant(plantId) {
     this.selectedPlantId = plantId;
+    this.revalidateAllPlannedCells();
     this.notify();
   }
 
@@ -268,11 +532,11 @@ export class GameClient {
     this.notify();
   }
 
-  addPlannedCellDraft(catalogEntry, x_mm, y_mm, rotation_deg = 0, valid = true, errors = []) {
-    if (!this.selectedPlantId) return;
+  addPlannedCellDraft(catalogEntry, x_mm, y_mm, rotation_deg = 0) {
+    if (!this.selectedPlantId) return null;
     this.undoStack.push(this.plannedCells.map((c) => ({ ...c })));
-    const draftId = `plan-${this.plannedCells.length + 1}-${catalogEntry.catalog_id}`;
-    this.plannedCells.push({
+    const draftId = `plan-${Date.now().toString(36)}-${this.plannedCells.length + 1}`;
+    const draft = {
       draft_id: draftId,
       plant_id: this.selectedPlantId,
       catalog_id: catalogEntry.catalog_id,
@@ -282,20 +546,57 @@ export class GameClient {
       width_mm: catalogEntry.width_mm,
       depth_mm: catalogEntry.depth_mm,
       height_mm: catalogEntry.height_mm,
-      x_mm,
-      y_mm,
+      clearance_mm: catalogEntry.clearance_mm ?? 300,
+      x_mm: Math.round(x_mm / 100) * 100,
+      y_mm: Math.round(y_mm / 100) * 100,
       rotation_deg,
       addons: [],
-      valid,
-      errors,
-    });
+      valid: true,
+      errors: [],
+    };
+    this.plannedCells.push(draft);
+    this.revalidateAllPlannedCells();
     this.selectedEntityId = draftId;
     this.notify();
+    return draft;
+  }
+
+  movePlannedCellDraft(draftId, x_mm, y_mm) {
+    const draft = this.plannedCells.find((d) => d.draft_id === draftId);
+    if (!draft) return false;
+    draft.x_mm = Math.max(0, Math.round(x_mm / 100) * 100);
+    draft.y_mm = Math.max(0, Math.round(y_mm / 100) * 100);
+    this.revalidateAllPlannedCells();
+    return true;
+  }
+
+  rotatePlannedCellDraft(draftId) {
+    const draft = this.plannedCells.find((d) => d.draft_id === draftId);
+    if (!draft) return false;
+    this.undoStack.push(this.plannedCells.map((c) => ({ ...c })));
+    draft.rotation_deg = ((draft.rotation_deg || 0) + 90) % 360;
+    this.revalidateAllPlannedCells();
+    this.notify();
+    return true;
+  }
+
+  removePlannedCellDraft(draftId) {
+    const idx = this.plannedCells.findIndex((d) => d.draft_id === draftId);
+    if (idx < 0) return false;
+    this.undoStack.push(this.plannedCells.map((c) => ({ ...c })));
+    this.plannedCells.splice(idx, 1);
+    if (this.selectedEntityId === draftId) {
+      this.selectedEntityId = null;
+    }
+    this.revalidateAllPlannedCells();
+    this.notify();
+    return true;
   }
 
   undoPlannedChange() {
     if (this.undoStack.length === 0) return false;
     this.plannedCells = this.undoStack.pop();
+    this.revalidateAllPlannedCells();
     this.notify();
     return true;
   }

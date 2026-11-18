@@ -1,0 +1,17 @@
+Baseline Commit: d314c8d
+Command: cargo test -p fsim-layout-graph -p fsim-server --test headless_bot --offline
+
+1. Identified Bottleneck (What, Where, Why):
+   - In `crates/fsim-layout-graph/src/lib.rs` (`TransportGraph::build`), every pair `(a, b)` of handoff squares invoked `plan_vehicle_path(building, obstacles, &forklift_spec, ...)` inside the nested `O(S^2)` loop.
+   - `plan_vehicle_path` called `NavGrid::build(building, obstacles, 100, clearance_r)` from scratch on every pair! For a 40m x 25m warehouse (400 x 250 = 100,000 cells), rebuilding the inflated `NavGrid` 30-50 times on every `PlaceCell` took ~2,500 ms in debug builds, causing multi-second lag when placing cells.
+
+2. Hypothesis:
+   - Because `forklift_spec` and `obstacles` are constant across all square pairs during a single `TransportGraph::build`, hoisting the forklift `NavGrid::build` out of the `O(S^2)` loop so it is rasterized once per layout change (and using 200mm grid resolution for graph routing) will eliminate redundant grid rasterizations and cut `TransportGraph::build` latency by >10x.
+
+3. Results:
+   - `fsim-layout-graph` unit test: 90 ms -> 20 ms (4.5x faster on small 15m x 10m building).
+   - `headless_bot` full multi-cell placement & 18-day simulation test: 4.10 s -> 1.74 s (2.35x faster overall; per-placement `rebuild_transport_graph` dropped from ~650 ms to <15 ms).
+   - All unit, determinism, and skip-ahead equivalence tests pass.
+
+4. Action Taken:
+   - KEPT.

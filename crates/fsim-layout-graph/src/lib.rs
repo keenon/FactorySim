@@ -5,9 +5,8 @@
 pub mod reference;
 
 use fsim_geom::{AabbMm, PointMm, PolygonWithHolesMm};
-use fsim_motion::Pose2D;
 use fsim_navgrid::NavGrid;
-use fsim_path_vehicle::{plan_vehicle_path, VehicleSpec};
+use fsim_path_vehicle::VehicleSpec;
 use fsim_path_walk::plan_walk_path;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -75,8 +74,14 @@ impl TransportGraph {
         obstacles: &[AabbMm],
         squares: &[SquareEndpoint],
     ) -> Self {
-        let walk_grid = NavGrid::build(building, obstacles, 100, 250);
+        let walk_grid = NavGrid::build(building, obstacles, 200, 250);
         let forklift_spec = VehicleSpec::standard_forklift(true);
+        let forklift_grid = NavGrid::build(
+            building,
+            obstacles,
+            200,
+            forklift_spec.ClearanceRadiusMm(),
+        );
         let mut endpoints = BTreeMap::new();
         for sq in squares {
             endpoints.insert((sq.cell_id.clone(), sq.square_name.clone()), sq.clone());
@@ -91,14 +96,8 @@ impl TransportGraph {
                 if let Some((waypoints, distance_mm)) =
                     plan_walk_path(&walk_grid, a.access_point, b.access_point)
                 {
-                    let forklift_feasible = plan_vehicle_path(
-                        building,
-                        obstacles,
-                        &forklift_spec,
-                        Pose2D::new(a.access_point.x, a.access_point.y, 0),
-                        Pose2D::new(b.access_point.x, b.access_point.y, 0),
-                    )
-                    .is_some();
+                    let forklift_feasible =
+                        plan_walk_path(&forklift_grid, a.access_point, b.access_point).is_some();
                     let key = (
                         (a.cell_id.clone(), a.square_name.clone()),
                         (b.cell_id.clone(), b.square_name.clone()),
