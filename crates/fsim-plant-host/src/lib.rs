@@ -51,6 +51,36 @@ use fsim_toolroom::starter_toolroom_catalog;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct TupleKeyMap;
+
+pub mod tuple_map_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::BTreeMap;
+
+    pub fn serialize<S, V>(
+        map: &BTreeMap<(String, String), V>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+        V: Serialize,
+    {
+        let vec: Vec<(&(String, String), &V)> = map.iter().collect();
+        vec.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D, V>(
+        deserializer: D,
+    ) -> Result<BTreeMap<(String, String), V>, D::Error>
+    where
+        D: Deserializer<'de>,
+        V: Deserialize<'de>,
+    {
+        let vec: Vec<((String, String), V)> = Vec::deserialize(deserializer)?;
+        Ok(vec.into_iter().collect())
+    }
+}
 /// Returns the combined starter catalog across all teams.
 pub fn full_starter_catalog() -> Vec<CellCatalogEntry> {
     let mut all = Vec::new();
@@ -157,6 +187,7 @@ pub struct SimWorld {
     pub buffers: BufferView,
     pub transport_graphs: BTreeMap<String, TransportGraph>,
 
+    #[serde(with = "tuple_map_serde")]
     pub market_policies: BTreeMap<(String, String), MarketBiddingPolicy>,
     pub market_reputation_permille: BTreeMap<String, u32>,
     pub unlocked_certs: Vec<String>,

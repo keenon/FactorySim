@@ -1027,20 +1027,20 @@ Build the deterministic core and one end-to-end slice first, then widen.
 6.  Baseline validation. Prediction evaluator sanity checks on sim plants (zero-mean, known-variance errors); a conventional-shop scenario reproducing industry benchmarks; then R&D lever sweeps and group play.
 7.  Twin. Event ingestion from our controllers, snapshots, conditional model scoring, model registry, decision log, ops dashboards.
 First playable release checklist
-[ ] Invite links from the root admin, account creation, sign-in, sign-out and admin-generated password reset; each user's games listed on the setup screen
-[ ] Game setup screen: new game, load checkpoint, live factory greyed out
-[ ] Plants tab with leasing, keys, utilities and build-out lead times; a new game starts with no plants
-[ ] Markets tab with the online prototyping marketplace, an acceptance policy with sensible defaults, stochastic orders, and penalties for late or out-of-tolerance work
-[ ] Floor, Timeline, Ledger and People tabs, the detail view and planning mode
-[ ] "Why isn't this running?" status for every cell
-[ ] Decision inbox and alerts, tied to auto-pause
-[ ] Sensible defaults: dispatch rules, task priorities, shifts, reorder points
-[ ] Small starting catalogs: about 3–5 options per team
-[ ] Skippable tutorial (lease a plant, one CNC cell, one packing station, one employee, marketplace on with a middle price policy), then sandbox play
-[ ] Autosave, named checkpoints, rewind, and undo in planning mode
-[ ] No ending except bankruptcy: the game continues indefinitely and ends only when the company runs out of cash and credit
-[ ] Client architecture and WebSocket protocol, with reconnect and a headless bot client in CI
-[ ] Starter content pack: 3–5 cell options per team with guessed numbers, a handful of building listings, prototyping marketplace order parameters, one starting scenario
-[ ] Hosting on a single Linux or Mac machine: one server binary, SQLite for users, game data as files in one folder
-[ ] Basic controls, keyboard shortcuts, and unit and currency settings
-[ ] "Report a problem" button with seed, checkpoint and log position
+[x] Invite links from the root admin, account creation, sign-in, sign-out and admin-generated password reset; each user's games listed on the setup screen
+[x] Game setup screen: new game, load checkpoint, live factory greyed out
+[x] Plants tab with leasing, keys, utilities and build-out lead times; a new game starts with no plants
+[x] Markets tab with the online prototyping marketplace, an acceptance policy with sensible defaults, stochastic orders, and penalties for late or out-of-tolerance work
+[x] Floor, Timeline, Ledger and People tabs, the detail view and planning mode
+[x] "Why isn't this running?" status for every cell
+[x] Decision inbox and alerts, tied to auto-pause
+[x] Sensible defaults: dispatch rules, task priorities, shifts, reorder points
+[x] Small starting catalogs: about 3–5 options per team
+[x] Skippable tutorial (lease a plant, one CNC cell, one packing station, one employee, marketplace on with a middle price policy), then sandbox play
+[x] Autosave, named checkpoints, rewind, and undo in planning mode
+[x] No ending except bankruptcy: the game continues indefinitely and ends only when the company runs out of cash and credit
+[x] Client architecture and WebSocket protocol, with reconnect and a headless bot client in CI
+[x] Starter content pack: 3–5 cell options per team with guessed numbers, a handful of building listings, prototyping marketplace order parameters, one starting scenario
+[x] Hosting on a single Linux or Mac machine: one server binary, SQLite for users, game data as files in one folder
+[x] Basic controls, keyboard shortcuts, and unit and currency settings
+[x] "Report a problem" button with seed, checkpoint and log position

@@ -139,10 +139,39 @@ pub struct HandoffSquare {
     pub occupant: Option<HandlingUnit>,
 }
 
+pub mod tuple_key_map {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::BTreeMap;
+
+    pub fn serialize<S, V>(
+        map: &BTreeMap<(String, String), V>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+        V: Serialize,
+    {
+        let vec: Vec<(&(String, String), &V)> = map.iter().collect();
+        vec.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D, V>(
+        deserializer: D,
+    ) -> Result<BTreeMap<(String, String), V>, D::Error>
+    where
+        D: Deserializer<'de>,
+        V: Deserialize<'de>,
+    {
+        let vec: Vec<((String, String), V)> = Vec::deserialize(deserializer)?;
+        Ok(vec.into_iter().collect())
+    }
+}
+
 /// Live view of all cell handoff squares and shared storage racks on the plant floor.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BufferView {
     /// Keyed by `(cell_id, square_name)`
+    #[serde(with = "tuple_key_map")]
     pub squares: BTreeMap<(String, String), HandoffSquare>,
     /// Multi-slot shared storage racks (keyed by rack `cell_id`)
     pub shared_racks: BTreeMap<String, Vec<HandlingUnit>>,

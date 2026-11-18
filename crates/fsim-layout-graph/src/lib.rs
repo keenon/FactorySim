@@ -32,11 +32,38 @@ pub struct LayoutRoute {
     pub forklift_feasible: bool,
 }
 
+pub mod vec_map_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::BTreeMap;
+
+    pub fn serialize<S, K, V>(map: &BTreeMap<K, V>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+        K: Serialize + Ord,
+        V: Serialize,
+    {
+        let vec: Vec<(&K, &V)> = map.iter().collect();
+        vec.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D, K, V>(deserializer: D) -> Result<BTreeMap<K, V>, D::Error>
+    where
+        D: Deserializer<'de>,
+        K: Deserialize<'de> + Ord,
+        V: Deserialize<'de>,
+    {
+        let vec: Vec<(K, V)> = Vec::deserialize(deserializer)?;
+        Ok(vec.into_iter().collect())
+    }
+}
+
 /// Transport graph for a single plant floor plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransportGraph {
     pub layout_version: u64,
+    #[serde(with = "vec_map_serde")]
     pub endpoints: BTreeMap<(String, String), SquareEndpoint>,
+    #[serde(with = "vec_map_serde")]
     pub routes: BTreeMap<((String, String), (String, String)), LayoutRoute>,
 }
 
